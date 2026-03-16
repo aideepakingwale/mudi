@@ -637,7 +637,7 @@ function togglePwVis(inputId, btn) {
 const STUN_SERVERS   = [{ urls: 'stun:stun.l.google.com:19302' },
                         { urls: 'stun:stun1.l.google.com:19302' }];
 const CHUNK_SIZE     = 16384;   // 16 KB DataChannel chunk
-const NTP_INTERVAL   = 5000;    // re-probe NTP every 5s
+const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
 const MICRO_THRESH   = 20;      // ms — time-stretch below this is not worth it
@@ -1665,11 +1665,12 @@ async function doRejoin() {
 ═══════════════════════════════════════════════════════════ */
 function initSocket() {
   S.socket = io({
-      reconnection: true,
+      reconnection:         true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 8000,
-      timeout: 10000,
+      reconnectionDelay:    1500,       // wait 1.5s before first retry
+      reconnectionDelayMax: 10000,      // max 10s between retries
+      timeout:              30000,      // connection timeout — matches server pingTimeout
+      transports:           ['websocket', 'polling'],  // websocket first, polling as fallback
     });
 
   /* NTP */
@@ -1849,15 +1850,29 @@ function initSocket() {
   });
 
   /* Disconnect / reconnect */
+  // ── Socket.IO v4 disconnect / reconnect handling ──────────────────────
   S.socket.on('disconnect', (reason) => {
     console.warn('[socket] disconnect reason:', reason);
+
     if (reason === 'io server disconnect') {
+      // Server explicitly closed the connection — hard reload
       toast('Session ended by server');
       stopAudio();
       setTimeout(() => location.reload(), 2500);
-    } else {
+      return;
+    }
+
+    if (reason === 'transport close' || reason === 'transport error') {
+      // Likely a brief network blip — socket.io will auto-reconnect
+      // Don't show banner immediately; wait 6s to see if it self-heals
       S.reconnecting = true;
-      // Delay showing the banner 3s — avoids flicker during file transfer
+      clearTimeout(S._reconnectBannerTimer);
+      S._reconnectBannerTimer = setTimeout(() => {
+        if (S.reconnecting) showReconnectBanner(true);
+      }, 6000);
+    } else {
+      // Other disconnect — show banner after short delay
+      S.reconnecting = true;
       clearTimeout(S._reconnectBannerTimer);
       S._reconnectBannerTimer = setTimeout(() => {
         if (S.reconnecting) showReconnectBanner(true);
@@ -1865,26 +1880,31 @@ function initSocket() {
     }
   });
 
-  S.socket.on('reconnecting', (attempt) => {
-    console.log('[socket] reconnecting attempt', attempt);
-    // Only show banner after 2nd attempt — first blip is often transient
-    if (attempt >= 2) showReconnectBanner(true);
+  // Socket.IO v4: fires on each reconnect attempt
+  S.socket.on('connect_error', (err) => {
+    console.warn('[socket] connect_error:', err.message);
+    // Only show banner after the connection has been down for a while
+    if (S.reconnecting) return; // already handled by disconnect handler
+    S.reconnecting = true;
+    clearTimeout(S._reconnectBannerTimer);
+    S._reconnectBannerTimer = setTimeout(() => {
+      if (S.reconnecting) showReconnectBanner(true);
+    }, 6000);
   });
 
-  S.socket.on('reconnect', () => {
+  // Socket.IO v4: 'connect' fires on both initial connect AND reconnect
+  S.socket.on('connect', () => {
+    if (!S.reconnecting) return;  // initial connect — nothing to restore
+    console.log('[socket] reconnected');
     S.reconnecting = false;
+    clearTimeout(S._reconnectBannerTimer);
     showReconnectBanner(false);
-    toast('Reconnected');
-    // Re-register with the room on socket reconnect
+    toast('Reconnected ✓');
+    // Re-register with the room
     if (S.code && S.role) {
-      console.log('[socket] reconnected — rejoining room', S.code, 'as', S.role);
+      console.log('[socket] rejoining room', S.code, 'as', S.role);
       S.socket.emit('room:rejoin', { code: S.code, role: S.role });
     }
-  });
-
-  S.socket.on('reconnect_failed', () => {
-    toast('Could not reconnect — please reload');
-    stopAudio();
   });
 
   // Dedicated error event for rejoin failures — does NOT share room:err handler
