@@ -689,7 +689,7 @@ const S = {
   driftTimer     : null,
   seekTimer      : null,
   corrCount      : 0,
-  _manualStop    : false,   // prevents onended from overriding UI after manual stop
+  _srcGen        : 0,       // increments on every stopAudio() — guards async onended
   _reconnectBannerTimer: null,
   // UI
   seekDragging   : false,
@@ -1166,20 +1166,24 @@ async function decodeAudio() {
   await ensureCtx();
   if (!S.audioBuf) {
     S.audioBuf = await S.audioCtx.decodeAudioData(S.fileBuf.slice(0));
-    S.duration  = S.audioBuf.duration;
-    $('duration').textContent = fmtTime(S.duration);
-    const seekBar = $('seek-bar');
-    seekBar.max = S.duration.toFixed(2);
   }
+  // Always sync duration + seek bar max (handles replay after stop)
+  S.duration = S.audioBuf.duration;
+  const seekBar = $('seek-bar');
+  if (seekBar) {
+    seekBar.max = S.duration.toFixed(3);
+    seekBar.style.setProperty('--p', seekBar.value > 0 ?
+      (parseFloat(seekBar.value) / S.duration * 100).toFixed(2) + '%' : '0%');
+  }
+  $('duration').textContent = fmtTime(S.duration);
 }
 
 function stopAudio() {
   if (S.audioSrc) {
-    S._manualStop = true;          // tell onended this was deliberate
+    S._srcGen++;                     // invalidate any pending onended callbacks
     try { S.audioSrc.stop(); } catch(e) {}
     S.audioSrc.disconnect();
     S.audioSrc = null;
-    S._manualStop = false;
   }
   clearInterval(S.driftTimer);
   clearInterval(S.seekTimer);
@@ -1193,8 +1197,9 @@ async function doSyncPlay(globalPlayAt, position = 0) {
   S.audioSrc = S.audioCtx.createBufferSource();
   S.audioSrc.buffer = S.audioBuf;
   S.audioSrc.connect(S.audioCtx.destination);
+  const _myGen = ++S._srcGen;       // snapshot generation at creation time
   S.audioSrc.onended = () => {
-    if (S._manualStop) return;   // deliberate stop — don't change UI state
+    if (S._srcGen !== _myGen) return; // a newer source was created — ignore
     // Natural end of track
     S.playing = false;
     clearInterval(S.seekTimer);
@@ -1203,6 +1208,7 @@ async function doSyncPlay(globalPlayAt, position = 0) {
     if (sb) { sb.value = S.duration; sb.style.setProperty('--p','100%'); }
     $('cur-time').textContent = fmtTime(S.duration);
     updatePlayerControls();
+    console.log('[audio] track ended naturally');
   };
 
   const delayMs = globalPlayAt - gn();            // time until scheduled start
@@ -1399,10 +1405,21 @@ function onSyncPlay() {
 async function onPlayPause() {
   if (S.role !== 'master') return;
   if (!S.playing) {
-    // Resume from current seek position
-    const pos = parseFloat($('seek-bar').value) || 0;
+    // Resume — use seek bar value (accurate when paused, set by onSeekCommit/tickSeek)
+    const pos = Math.min(
+      S.duration || 0,
+      Math.max(0, parseFloat($('seek-bar').value) || 0)
+    );
     S.socket.emit('sync:play', { position: pos });
   } else {
+    // Pause — capture current position into seek bar before stopping
+    const cur = getCurrentPos();
+    const sb  = $('seek-bar');
+    if (sb) {
+      sb.value = cur;
+      sb.style.setProperty('--p', S.duration > 0 ? (cur / S.duration * 100).toFixed(2) + '%' : '0%');
+      $('cur-time').textContent = fmtTime(cur);
+    }
     stopAudio();
     S.socket.emit('sync:pause');
     updatePlayerControls();
@@ -1489,15 +1506,40 @@ function onShareAnotherFile() {
   goScreen('room');
 }
 
+function getCurrentPos() {
+  // Use AudioContext time for accuracy — seek bar lags by up to 250ms
+  if (S.playing && S.audioCtx && S.audioStartCtx) {
+    const elapsed = S.audioCtx.currentTime - S.audioStartCtx;
+    return Math.min(S.duration, S.playStartPos + Math.max(0, elapsed));
+  }
+  // Fallback: use seek bar value (paused state)
+  return parseFloat($('seek-bar').value) || 0;
+}
+
 function skipBack() {
   if (S.role !== 'master') return;
-  const pos = Math.max(0, parseFloat($('seek-bar').value) - 10);
+  const pos = Math.max(0, getCurrentPos() - 10);
   S.socket.emit('sync:seek', { position: pos });
+  // Update seek bar immediately so UI responds before server round-trip
+  const sb = $('seek-bar');
+  if (sb) {
+    sb.value = pos;
+    sb.style.setProperty('--p', S.duration > 0 ? (pos / S.duration * 100).toFixed(2) + '%' : '0%');
+    $('cur-time').textContent = fmtTime(pos);
+  }
 }
+
 function skipFwd() {
   if (S.role !== 'master') return;
-  const pos = Math.min(S.duration, parseFloat($('seek-bar').value) + 10);
+  const pos = Math.min(S.duration, getCurrentPos() + 10);
   S.socket.emit('sync:seek', { position: pos });
+  // Update seek bar immediately
+  const sb = $('seek-bar');
+  if (sb) {
+    sb.value = pos;
+    sb.style.setProperty('--p', S.duration > 0 ? (pos / S.duration * 100).toFixed(2) + '%' : '0%');
+    $('cur-time').textContent = fmtTime(pos);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
