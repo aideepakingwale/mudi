@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment secrets — NEVER commit this file
+.env
+
+# SQLite database files (auto-created on first run)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output
+dist/
+build/

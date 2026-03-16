@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MuDi — Privacy Policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#09091A;--surf:#1A1A38;--surf2:#20204A;
+  --cyan:#00ADB5;--white:#E4E4F0;--muted:#606088;
+  --bdr:rgba(0,173,181,.18);--amber:#EF9F27;
+  --fd:'Oxanium',sans-serif;--fm:'Space Mono',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--bg);color:var(--white);font-family:var(--fm);
+  font-size:14px;line-height:1.8;min-height:100dvh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 70% 40% at 10% 90%,rgba(0,173,181,.05) 0%,transparent 70%),
+    radial-gradient(ellipse 50% 50% at 90% 5%,rgba(80,60,200,.06) 0%,transparent 60%);
+}
+
+/* ── Top nav ──────────────────────────────────────────────────────────────── */
+nav{
+  position:sticky;top:0;z-index:50;
+  background:rgba(9,9,26,.92);backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--bdr);
+  padding:14px clamp(16px,5vw,48px);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.nav-logo{font-family:var(--fd);font-weight:800;font-size:22px;color:var(--cyan);
+  text-decoration:none;letter-spacing:-.02em;}
+.nav-links{display:flex;gap:clamp(14px,3vw,24px);align-items:center;}
+.nav-links a{font-size:12px;color:var(--muted);text-decoration:none;
+  transition:color .2s;letter-spacing:.04em;}
+.nav-links a:hover{color:var(--cyan);}
+.nav-links a.active{color:var(--white);}
+.btn-back{
+  background:none;border:1px solid var(--bdr);border-radius:8px;
+  color:var(--muted);font-family:var(--fm);font-size:11px;padding:7px 14px;
+  cursor:pointer;transition:all .2s;text-decoration:none;
+  display:flex;align-items:center;gap:6px;
+}
+.btn-back:hover{border-color:var(--cyan);color:var(--cyan);}
+
+/* ── Page layout ─────────────────────────────────────────────────────────── */
+.page{
+  position:relative;z-index:1;
+  max-width:760px;margin:0 auto;
+  padding:clamp(32px,6vw,60px) clamp(16px,5vw,40px) 80px;
+}
+.page-header{margin-bottom:40px;}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(0,173,181,.1);border:1px solid rgba(0,173,181,.25);
+  border-radius:999px;padding:4px 12px;
+  font-size:10px;color:var(--cyan);letter-spacing:.1em;text-transform:uppercase;
+  margin-bottom:16px;
+}
+h1{font-family:var(--fd);font-weight:800;font-size:clamp(28px,7vw,42px);
+  color:var(--white);line-height:1.1;margin-bottom:12px;}
+.subtitle{font-size:13px;color:var(--muted);margin-top:8px;}
+.updated{font-size:11px;color:var(--muted);margin-top:16px;
+  padding-top:16px;border-top:1px solid var(--bdr);}
+
+/* ── TOC ──────────────────────────────────────────────────────────────────── */
+.toc{
+  background:var(--surf);border:1px solid var(--bdr);border-radius:16px;
+  padding:clamp(16px,4vw,24px);margin-bottom:40px;
+}
+.toc-title{font-family:var(--fd);font-size:12px;color:var(--cyan);
+  letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px;}
+.toc ol{list-style:none;counter-reset:toc;display:flex;flex-direction:column;gap:6px;}
+.toc li{counter-increment:toc;display:flex;align-items:baseline;gap:8px;
+  font-size:12px;}
+.toc li::before{content:counter(toc,decimal-leading-zero);color:var(--muted);
+  font-size:10px;min-width:18px;}
+.toc a{color:var(--muted);text-decoration:none;transition:color .2s;}
+.toc a:hover{color:var(--cyan);}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+.section{margin-bottom:40px;scroll-margin-top:80px;}
+h2{font-family:var(--fd);font-weight:600;font-size:clamp(16px,4vw,20px);
+  color:var(--cyan);margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+h2 .sec-num{font-size:11px;color:var(--muted);font-weight:400;}
+p{color:#B0B0CC;margin-bottom:12px;}
+p:last-child{margin-bottom:0;}
+ul,ol{padding-left:20px;margin-bottom:12px;}
+ul li,ol li{color:#B0B0CC;margin-bottom:6px;padding-left:4px;}
+ul{list-style:none;}
+ul li::before{content:'—';color:var(--muted);margin-right:10px;margin-left:-20px;}
+
+/* ── Highlight box ───────────────────────────────────────────────────────── */
+.highlight{
+  background:var(--surf);border-left:3px solid var(--cyan);
+  border-radius:0 12px 12px 0;padding:16px 20px;margin:16px 0;
+  font-size:13px;color:#C0C0DC;
+}
+.warn{border-left-color:var(--amber);}
+.warn strong{color:var(--amber);}
+
+/* ── Contact card ────────────────────────────────────────────────────────── */
+.contact-card{
+  background:var(--surf);border:1px solid var(--bdr);border-radius:16px;
+  padding:24px;display:flex;align-items:flex-start;gap:16px;margin-top:16px;
+}
+.contact-icon{font-size:24px;flex-shrink:0;margin-top:2px;}
+.contact-body h3{font-family:var(--fd);font-size:14px;color:var(--white);margin-bottom:6px;}
+.contact-body p{font-size:12px;color:var(--muted);margin:0;}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+footer{
+  border-top:1px solid var(--bdr);
+  padding:24px clamp(16px,5vw,48px);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  font-size:11px;color:var(--muted);
+}
+footer a{color:var(--muted);text-decoration:none;}
+footer a:hover{color:var(--cyan);}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">MuDi</a>
+  <div class="nav-links">
+    <a href="/privacy" class="active">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="/login" class="btn-back">← Sign In</a>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="page-header">
+    <div class="badge">Legal</div>
+    <h1>Privacy Policy</h1>
+    <p class="subtitle">How MuDi collects, uses, and protects your information.</p>
+    <p class="updated">Last updated: <span id="date"></span></p>
+  </div>
+
+  <div class="toc">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#s1">Information We Collect</a></li>
+      <li><a href="#s2">How We Use Your Information</a></li>
+      <li><a href="#s3">Social Sign-In (Google &amp; Facebook)</a></li>
+      <li><a href="#s4">Data Storage &amp; Security</a></li>
+      <li><a href="#s5">Cookies &amp; Sessions</a></li>
+      <li><a href="#s6">Data Sharing</a></li>
+      <li><a href="#s7">Your Rights</a></li>
+      <li><a href="#s8">Children's Privacy</a></li>
+      <li><a href="#s9">Changes to This Policy</a></li>
+      <li><a href="#s10">Contact</a></li>
+    </ol>
+  </div>
+
+  <div class="section" id="s1">
+    <h2><span class="sec-num">01</span> Information We Collect</h2>
+    <p>MuDi collects only what is necessary to provide the service.</p>
+    <p><strong style="color:var(--white)">Account information</strong></p>
+    <ul>
+      <li>Email address — used to identify your account</li>
+      <li>Display name — shown in rooms to other users</li>
+      <li>Profile picture — shown in the app (from social login, optional)</li>
+      <li>Hashed password — stored for email/password accounts (bcrypt, never plaintext)</li>
+    </ul>
+    <p><strong style="color:var(--white)">Usage information</strong></p>
+    <ul>
+      <li>The rooms you create or join (room code, name, timestamps)</li>
+      <li>Last login timestamp</li>
+    </ul>
+    <div class="highlight">
+      MuDi does <strong>not</strong> record, store, or transmit your audio files. All file transfers happen directly between your devices over an encrypted WebRTC DataChannel — the server never sees the content.
+    </div>
+  </div>
+
+  <div class="section" id="s2">
+    <h2><span class="sec-num">02</span> How We Use Your Information</h2>
+    <p>We use your information solely to:</p>
+    <ul>
+      <li>Authenticate you and maintain your session</li>
+      <li>Display your name inside rooms</li>
+      <li>Allow you to rejoin rooms after a brief disconnection</li>
+    </ul>
+    <p>We do <strong>not</strong> use your data for advertising, profiling, or marketing of any kind.</p>
+  </div>
+
+  <div class="section" id="s3">
+    <h2><span class="sec-num">03</span> Social Sign-In (Google &amp; Facebook)</h2>
+    <p>When you choose to sign in with Google or Facebook, we receive from that provider:</p>
+    <ul>
+      <li>Your name as it appears on the platform</li>
+      <li>Your email address (if shared by the platform)</li>
+      <li>Your public profile picture URL</li>
+    </ul>
+    <p>We do <strong>not</strong> receive your password, friends list, posts, messages, or any other account data from these platforms.</p>
+    <div class="highlight warn">
+      <strong>Account linking:</strong> If you sign in with Google or Facebook using the same email address as an existing email/password account, MuDi will link them to the same account automatically.
+    </div>
+    <p>Social sign-in is governed by the respective platform's privacy policies:</p>
+    <ul>
+      <li><a href="https://policies.google.com/privacy" target="_blank" rel="noopener" style="color:var(--cyan)">Google Privacy Policy</a></li>
+      <li><a href="https://www.facebook.com/policy.php" target="_blank" rel="noopener" style="color:var(--cyan)">Facebook Data Policy</a></li>
+    </ul>
+  </div>
+
+  <div class="section" id="s4">
+    <h2><span class="sec-num">04</span> Data Storage &amp; Security</h2>
+    <p>Your account data is stored in a SQLite database on the server hosting this application. We take the following security measures:</p>
+    <ul>
+      <li>Passwords are hashed with bcrypt (cost factor 12) — they are never stored in plaintext</li>
+      <li>All connections are encrypted via HTTPS (TLS 1.2+)</li>
+      <li>WebRTC audio transfers use DTLS-SRTP end-to-end encryption</li>
+      <li>Session cookies are marked HttpOnly and Secure</li>
+    </ul>
+    <p>No security system is perfect. We encourage you to use a strong, unique password for your MuDi account.</p>
+  </div>
+
+  <div class="section" id="s5">
+    <h2><span class="sec-num">05</span> Cookies &amp; Sessions</h2>
+    <p>MuDi uses a single session cookie to keep you signed in. This cookie:</p>
+    <ul>
+      <li>Is named <code style="color:var(--cyan);background:var(--surf2);padding:1px 6px;border-radius:4px;">connect.sid</code></li>
+      <li>Is set when you sign in and expires after 7 days</li>
+      <li>Contains only a session identifier — no personal data</li>
+      <li>Is marked HttpOnly (not accessible to JavaScript) and Secure (HTTPS only)</li>
+    </ul>
+    <p>We do not use tracking cookies, advertising cookies, or third-party analytics cookies.</p>
+  </div>
+
+  <div class="section" id="s6">
+    <h2><span class="sec-num">06</span> Data Sharing</h2>
+    <p>We do not sell, rent, or trade your personal data.</p>
+    <p>Your display name is shared with other users in the same room. Your email address is never shown to other users.</p>
+    <p>We may disclose data if required by law or to protect the safety of users.</p>
+  </div>
+
+  <div class="section" id="s7">
+    <h2><span class="sec-num">07</span> Your Rights</h2>
+    <p>You have the right to:</p>
+    <ul>
+      <li><strong style="color:var(--white)">Access</strong> — request a copy of the data we hold about you</li>
+      <li><strong style="color:var(--white)">Correction</strong> — request correction of inaccurate data</li>
+      <li><strong style="color:var(--white)">Deletion</strong> — request deletion of your account and all associated data</li>
+      <li><strong style="color:var(--white)">Portability</strong> — request your data in a machine-readable format</li>
+    </ul>
+    <p>To exercise any of these rights, contact the app administrator. We will respond within 30 days.</p>
+  </div>
+
+  <div class="section" id="s8">
+    <h2><span class="sec-num">08</span> Children's Privacy</h2>
+    <p>MuDi is not directed at children under the age of 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided us with personal information, please contact us and we will delete it promptly.</p>
+  </div>
+
+  <div class="section" id="s9">
+    <h2><span class="sec-num">09</span> Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. We will notify users of significant changes by updating the "Last updated" date at the top of this page.</p>
+    <p>Continued use of MuDi after changes constitutes acceptance of the updated policy.</p>
+  </div>
+
+  <div class="section" id="s10">
+    <h2><span class="sec-num">10</span> Contact</h2>
+    <p>For privacy-related questions, data requests, or account deletion:</p>
+    <div class="contact-card">
+      <div class="contact-icon">✉</div>
+      <div class="contact-body">
+        <h3>Contact the App Administrator</h3>
+        <p>Reach out through the platform or community where you found MuDi. Please include "Privacy Request" in your message subject.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>© <span id="year"></span> MuDi — The Digital Aux Cord</span>
+  <div style="display:flex;gap:20px;">
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/terms">Terms &amp; Conditions</a>
+    <a href="/login">Sign In</a>
+  </div>
+</footer>
+
+<script>
+const now = new Date();
+document.getElementById('date').textContent =
+  now.toLocaleDateString('en-GB', { year:'numeric', month:'long', day:'numeric' });
+document.getElementById('year').textContent = now.getFullYear();
+</script>
+</body>
+</html>

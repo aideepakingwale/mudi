@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MuDi — Sign In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#09091A;--surf:#1A1A38;--surf2:#20204A;
+  --cyan:#00ADB5;--cyan2:#00C8D1;--cdim:rgba(0,173,181,.12);--cglo:rgba(0,173,181,.28);
+  --white:#E4E4F0;--muted:#606088;--bdr:rgba(0,173,181,.18);
+  --red:#E24B4A;--amber:#EF9F27;--green:#22C55E;
+  --fd:'Oxanium',sans-serif;--fm:'Space Mono',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+body{
+  min-height:100dvh;background:var(--bg);color:var(--white);font-family:var(--fm);
+  display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 70% 50% at 15% 85%,rgba(0,173,181,.07) 0%,transparent 70%),
+             radial-gradient(ellipse 50% 60% at 85% 10%,rgba(80,60,200,.08) 0%,transparent 60%);
+}
+.card{position:relative;z-index:1;width:100%;max-width:420px;background:var(--surf);
+  border:1px solid var(--bdr);border-radius:24px;padding:clamp(24px,6vw,40px);}
+.logo{font-family:var(--fd);font-weight:800;font-size:clamp(40px,11vw,56px);color:var(--cyan);
+  letter-spacing:-.03em;line-height:1;text-align:center;text-shadow:0 0 40px var(--cglo);}
+.tagline{font-size:9px;color:var(--muted);letter-spacing:.22em;text-align:center;
+  margin-top:4px;margin-bottom:28px;text-transform:uppercase;}
+.tabs{display:flex;background:var(--surf2);border-radius:12px;padding:4px;gap:4px;margin-bottom:22px;}
+.tab{flex:1;padding:10px 0;border-radius:9px;border:none;background:none;color:var(--muted);
+  font-family:var(--fd);font-size:13px;font-weight:600;cursor:pointer;transition:all .22s;letter-spacing:.04em;}
+.tab.active{background:var(--cyan);color:#060614;box-shadow:0 2px 12px var(--cglo);}
+.tab:not(.active):hover{color:var(--white);}
+.field{margin-bottom:14px;}
+label{display:block;font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px;}
+input[type=text],input[type=email],input[type=password]{
+  width:100%;background:var(--surf2);border:1px solid var(--bdr);border-radius:11px;
+  padding:13px 16px;color:var(--white);font-family:var(--fm);font-size:15px;outline:none;
+  -webkit-appearance:none;transition:border-color .2s,box-shadow .2s;}
+input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px var(--cdim);}
+input::placeholder{color:var(--muted);font-size:13px;}
+.btn{width:100%;padding:14px;border-radius:13px;border:none;cursor:pointer;
+  font-family:var(--fd);font-weight:600;font-size:14px;letter-spacing:.06em;
+  transition:all .18s;display:flex;align-items:center;justify-content:center;gap:8px;
+  min-height:50px;-webkit-tap-highlight-color:transparent;}
+.btn:active{transform:scale(.97);}
+.btn:disabled{opacity:.5;cursor:default;transform:none;}
+.btn-p{background:var(--cyan);color:#060614;}
+.btn-p:not(:disabled):hover{background:var(--cyan2);box-shadow:0 0 22px var(--cglo);}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:9px;
+  letter-spacing:.12em;margin:18px 0;text-transform:uppercase;}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--bdr);}
+/* Social buttons always visible */
+.social-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px;}
+.btn-social{
+  background:var(--surf2);border:1.5px solid var(--bdr);border-radius:13px;
+  padding:12px 8px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  gap:8px;font-family:var(--fm);font-size:11px;color:var(--white);
+  transition:all .2s;min-height:48px;width:100%;-webkit-tap-highlight-color:transparent;
+  letter-spacing:.02em;
+}
+.btn-social:active{transform:scale(.96);}
+.btn-google {border-color:rgba(234,67,53,.35);}
+.btn-google:hover {border-color:rgba(234,67,53,.7);background:rgba(234,67,53,.06);}
+.btn-facebook{border-color:rgba(24,119,242,.35);}
+.btn-facebook:hover{border-color:rgba(24,119,242,.7);background:rgba(24,119,242,.06);}
+.btn-social.not-configured{opacity:.45;cursor:default;}
+.btn-social.not-configured:hover{transform:none;}
+.social-note{margin-top:10px;padding:9px 14px;border-radius:10px;
+  background:rgba(239,159,39,.07);border:1px solid rgba(239,159,39,.2);
+  font-size:10px;color:var(--amber);line-height:1.5;text-align:center;}
+.msg{font-size:12px;text-align:center;padding:11px 14px;border-radius:10px;
+  margin-bottom:14px;display:none;line-height:1.4;}
+.msg.error{background:rgba(226,75,74,.1);color:var(--red);border:1px solid rgba(226,75,74,.22);}
+.msg.ok{background:rgba(34,197,94,.08);color:var(--green);border:1px solid rgba(34,197,94,.2);}
+.msg.show{display:block;}
+.terms{font-size:10px;color:var(--muted);text-align:center;margin-top:20px;line-height:1.6;}
+.pw-wrap{position:relative;}
+.pw-wrap input{padding-right:46px;}
+.pw-eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;
+  border:none;color:var(--muted);cursor:pointer;padding:6px;font-size:15px;line-height:1;}
+.pw-eye:hover{color:var(--cyan);}
+.strength{display:flex;gap:4px;margin-top:7px;}
+.str{flex:1;height:3px;border-radius:2px;background:var(--surf2);transition:background .3s;}
+.str-lbl{font-size:9px;margin-top:4px;letter-spacing:.06em;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">MuDi</div>
+  <div class="tagline">The Digital Aux Cord</div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('login')"  id="tab-login">Sign In</button>
+    <button class="tab"        onclick="switchTab('register')" id="tab-reg">Create Account</button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <!-- ── SIGN IN ─────────────────────────────────────────────────────── -->
+  <div id="panel-login">
+    <div class="social-grid" id="social-login"></div>
+    <div id="social-note-login"></div>
+    <div class="divider">or sign in with email</div>
+
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="you@example.com"
+        autocomplete="email" oninput="clearMsg()">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="login-pw" placeholder="••••••••"
+          autocomplete="current-password" oninput="clearMsg()">
+        <button class="pw-eye" type="button" onclick="togglePw('login-pw',this)">👁</button>
+      </div>
+    </div>
+    <button class="btn btn-p" id="btn-login" onclick="doLogin()">Sign In →</button>
+  </div>
+
+  <!-- ── CREATE ACCOUNT ──────────────────────────────────────────────── -->
+  <div id="panel-register" style="display:none;">
+    <div class="social-grid" id="social-register"></div>
+    <div id="social-note-register"></div>
+    <div class="divider">or register with email</div>
+
+    <div class="field">
+      <label>Your Name</label>
+      <input type="text" id="reg-name" placeholder="Display name"
+        autocomplete="name" oninput="clearMsg()">
+    </div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="reg-email" placeholder="you@example.com"
+        autocomplete="email" oninput="clearMsg()">
+    </div>
+    <div class="field">
+      <label>Password <span style="opacity:.5;font-size:8px;">min 8 chars</span></label>
+      <div class="pw-wrap">
+        <input type="password" id="reg-pw" placeholder="Choose a strong password"
+          autocomplete="new-password" oninput="onStrength(this.value)">
+        <button class="pw-eye" type="button" onclick="togglePw('reg-pw',this)">👁</button>
+      </div>
+      <div class="strength">
+        <div class="str" id="s1"></div><div class="str" id="s2"></div>
+        <div class="str" id="s3"></div><div class="str" id="s4"></div>
+      </div>
+      <div class="str-lbl" id="str-lbl" style="color:var(--muted);"></div>
+    </div>
+    <button class="btn btn-p" id="btn-reg" onclick="doRegister()">Create Account →</button>
+  </div>
+
+  <p class="terms">By continuing you agree to our
+  <a href="/terms" target="_blank" style="color:var(--cyan);text-decoration:none;">Terms &amp; Conditions</a>
+  and
+  <a href="/privacy" target="_blank" style="color:var(--cyan);text-decoration:none;">Privacy Policy</a>.
+  </p>
+</div>
+
+<script>
+/* Social SVG icons */
+const G_ICON = `<svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0">
+  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+</svg>`;
+
+const FB_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" style="flex-shrink:0">
+  <path fill="#1877F2" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+</svg>`;
+
+let prov = { google: false, facebook: false };
+
+async function loadProviders() {
+  try { const r = await fetch('/auth/providers'); prov = await r.json(); } catch {}
+  ['login','register'].forEach(id => renderSocial('social-' + id, 'social-note-' + id));
+}
+
+function renderSocial(gridId, noteId) {
+  const grid = document.getElementById(gridId);
+  const note = document.getElementById(noteId);
+  if (!grid) return;
+
+  const gCls  = prov.google   ? 'btn-social btn-google'   : 'btn-social btn-google not-configured';
+  const fbCls = prov.facebook ? 'btn-social btn-facebook' : 'btn-social btn-facebook not-configured';
+  const gAct  = prov.google   ? "location.href='/auth/google'"   : "socialNotReady('Google')";
+  const fbAct = prov.facebook ? "location.href='/auth/facebook'" : "socialNotReady('Facebook')";
+
+  grid.innerHTML =
+    `<button class="${gCls}"  onclick="${gAct}"  title="Continue with Google">${G_ICON} Google</button>` +
+    `<button class="${fbCls}" onclick="${fbAct}" title="Continue with Facebook">${FB_ICON} Facebook</button>`;
+
+  if (note) {
+    const missing = [];
+    if (!prov.google)   missing.push('Google');
+    if (!prov.facebook) missing.push('Facebook');
+    note.innerHTML = missing.length
+      ? `<div class="social-note">${missing.join(' & ')} login needs setup — use email below for now.</div>`
+      : '';
+  }
+}
+
+function socialNotReady(name) {
+  showMsg(name + ' login is not configured on this server yet. Please use email and password.', 'error');
+}
+
+/* Tab switch */
+function switchTab(t) {
+  document.getElementById('tab-login').classList.toggle('active', t==='login');
+  document.getElementById('tab-reg').classList.toggle('active', t==='register');
+  document.getElementById('panel-login').style.display    = t==='login'    ? '' : 'none';
+  document.getElementById('panel-register').style.display = t==='register' ? '' : 'none';
+  clearMsg();
+}
+
+/* Messages */
+function showMsg(txt, type) {
+  const el = document.getElementById('msg');
+  el.textContent = txt; el.className = 'msg ' + (type||'error') + ' show';
+}
+function clearMsg() { const el = document.getElementById('msg'); el.className='msg'; el.textContent=''; }
+
+/* Password eye */
+function togglePw(id, btn) {
+  const el = document.getElementById(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.textContent = el.type === 'password' ? '👁' : '🙈';
+}
+
+/* Strength meter */
+const STR_COLS = ['','#E24B4A','#EF9F27','#EF9F27','#22C55E'];
+const STR_LBLS = ['','Weak','Fair','Good','Strong ✓'];
+function onStrength(pw) {
+  let s = 0;
+  if (pw.length >= 8) s++;
+  if (pw.length >= 12) s++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
+  if (/[0-9]/.test(pw)) s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  s = Math.min(s, 4);
+  for (let i=1;i<=4;i++) document.getElementById('s'+i).style.background = i<=s ? STR_COLS[s] : 'var(--surf2)';
+  const lbl = document.getElementById('str-lbl');
+  lbl.textContent = pw.length ? STR_LBLS[s] : '';
+  lbl.style.color = STR_COLS[s] || 'var(--muted)';
+}
+
+/* Login */
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pw    = document.getElementById('login-pw').value;
+  if (!email) return showMsg('Please enter your email address.');
+  if (!pw)    return showMsg('Please enter your password.');
+  const btn = document.getElementById('btn-login');
+  btn.textContent = 'Signing in…'; btn.disabled = true;
+  try {
+    const r = await fetch('/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, password: pw }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showMsg('Welcome back! Loading…', 'ok');
+      setTimeout(() => { location.href = d.redirect || '/'; }, 500);
+    } else {
+      showMsg(d.error || 'Login failed — please try again.');
+      btn.textContent = 'Sign In →'; btn.disabled = false;
+    }
+  } catch {
+    showMsg('Network error — please try again.');
+    btn.textContent = 'Sign In →'; btn.disabled = false;
+  }
+}
+
+/* Register */
+async function doRegister() {
+  const name  = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pw    = document.getElementById('reg-pw').value;
+  if (!name)               return showMsg('Please enter your display name.');
+  if (!email || !email.includes('@')) return showMsg('Please enter a valid email address.');
+  if (pw.length < 8)       return showMsg('Password must be at least 8 characters.');
+  const btn = document.getElementById('btn-reg');
+  btn.textContent = 'Creating account…'; btn.disabled = true;
+  try {
+    const r = await fetch('/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name, email, password: pw }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showMsg('Account created! Loading MuDi…', 'ok');
+      setTimeout(() => { location.href = d.redirect || '/'; }, 600);
+    } else {
+      showMsg(d.error || 'Registration failed — please try again.');
+      btn.textContent = 'Create Account →'; btn.disabled = false;
+    }
+  } catch {
+    showMsg('Network error — please try again.');
+    btn.textContent = 'Create Account →'; btn.disabled = false;
+  }
+}
+
+/* Enter key */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const isLogin = document.getElementById('panel-register').style.display === 'none';
+  if (isLogin) doLogin(); else doRegister();
+});
+
+/* OAuth error from URL — specific message per error code */
+const ep = new URLSearchParams(location.search).get('error');
+const msg_ep = new URLSearchParams(location.search).get('msg');
+if (ep) {
+  const OAUTH_ERRORS = {
+    google_not_configured:  'Google sign-in is not enabled on this server yet. Please use email and password.',
+    facebook_not_configured:'Facebook sign-in is not enabled on this server yet. Please use email and password.',
+    google_failed:          'Google sign-in failed. This usually means the app is still in "Testing" mode — ask the admin to add your Google email as a test user, or use email and password.',
+    facebook_failed:        'Facebook sign-in failed. This usually means the app is in "Development" mode — ask the admin to switch it to Live, or use email and password.',
+    google:                 'Google sign-in failed — please try again or use email and password.',
+    facebook:               'Facebook sign-in failed — please try again or use email and password.',
+  };
+  showMsg(OAUTH_ERRORS[ep] || 'Sign-in failed — please try again or use email and password.');
+}
+if (msg_ep === 'signed-out') showMsg('You have been signed out.', 'ok');
+
+loadProviders();
+</script>
+</body>
+</html>

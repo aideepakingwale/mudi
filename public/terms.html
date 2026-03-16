@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MuDi — Terms &amp; Conditions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#09091A;--surf:#1A1A38;--surf2:#20204A;
+  --cyan:#00ADB5;--white:#E4E4F0;--muted:#606088;
+  --bdr:rgba(0,173,181,.18);--amber:#EF9F27;--red:#E24B4A;
+  --fd:'Oxanium',sans-serif;--fm:'Space Mono',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--bg);color:var(--white);font-family:var(--fm);
+  font-size:14px;line-height:1.8;min-height:100dvh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 60% 40% at 90% 90%,rgba(80,60,200,.06) 0%,transparent 65%),
+    radial-gradient(ellipse 50% 50% at 10% 10%,rgba(0,173,181,.05) 0%,transparent 60%);
+}
+nav{
+  position:sticky;top:0;z-index:50;
+  background:rgba(9,9,26,.92);backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--bdr);
+  padding:14px clamp(16px,5vw,48px);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.nav-logo{font-family:var(--fd);font-weight:800;font-size:22px;color:var(--cyan);
+  text-decoration:none;letter-spacing:-.02em;}
+.nav-links{display:flex;gap:clamp(14px,3vw,24px);align-items:center;}
+.nav-links a{font-size:12px;color:var(--muted);text-decoration:none;transition:color .2s;letter-spacing:.04em;}
+.nav-links a:hover{color:var(--cyan);}
+.nav-links a.active{color:var(--white);}
+.btn-back{background:none;border:1px solid var(--bdr);border-radius:8px;
+  color:var(--muted);font-family:var(--fm);font-size:11px;padding:7px 14px;
+  cursor:pointer;transition:all .2s;text-decoration:none;
+  display:flex;align-items:center;gap:6px;}
+.btn-back:hover{border-color:var(--cyan);color:var(--cyan);}
+.page{
+  position:relative;z-index:1;max-width:760px;margin:0 auto;
+  padding:clamp(32px,6vw,60px) clamp(16px,5vw,40px) 80px;
+}
+.page-header{margin-bottom:40px;}
+.badge{display:inline-flex;align-items:center;gap:6px;
+  background:rgba(0,173,181,.1);border:1px solid rgba(0,173,181,.25);
+  border-radius:999px;padding:4px 12px;
+  font-size:10px;color:var(--cyan);letter-spacing:.1em;text-transform:uppercase;margin-bottom:16px;}
+h1{font-family:var(--fd);font-weight:800;font-size:clamp(28px,7vw,42px);
+  color:var(--white);line-height:1.1;margin-bottom:12px;}
+.subtitle{font-size:13px;color:var(--muted);margin-top:8px;}
+.updated{font-size:11px;color:var(--muted);margin-top:16px;padding-top:16px;border-top:1px solid var(--bdr);}
+.toc{background:var(--surf);border:1px solid var(--bdr);border-radius:16px;
+  padding:clamp(16px,4vw,24px);margin-bottom:40px;}
+.toc-title{font-family:var(--fd);font-size:12px;color:var(--cyan);
+  letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px;}
+.toc ol{list-style:none;counter-reset:toc;display:flex;flex-direction:column;gap:6px;}
+.toc li{counter-increment:toc;display:flex;align-items:baseline;gap:8px;font-size:12px;}
+.toc li::before{content:counter(toc,decimal-leading-zero);color:var(--muted);font-size:10px;min-width:18px;}
+.toc a{color:var(--muted);text-decoration:none;transition:color .2s;}
+.toc a:hover{color:var(--cyan);}
+.section{margin-bottom:40px;scroll-margin-top:80px;}
+h2{font-family:var(--fd);font-weight:600;font-size:clamp(16px,4vw,20px);
+  color:var(--cyan);margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+h2 .sec-num{font-size:11px;color:var(--muted);font-weight:400;}
+p{color:#B0B0CC;margin-bottom:12px;}
+p:last-child{margin-bottom:0;}
+ul,ol{padding-left:20px;margin-bottom:12px;}
+ul li,ol li{color:#B0B0CC;margin-bottom:6px;padding-left:4px;}
+ul{list-style:none;}
+ul li::before{content:'—';color:var(--muted);margin-right:10px;margin-left:-20px;}
+.highlight{background:var(--surf);border-left:3px solid var(--cyan);
+  border-radius:0 12px 12px 0;padding:16px 20px;margin:16px 0;font-size:13px;color:#C0C0DC;}
+.warn{border-left-color:var(--amber);}
+.warn strong{color:var(--amber);}
+.danger{border-left-color:var(--red);}
+.danger strong{color:var(--red);}
+footer{border-top:1px solid var(--bdr);
+  padding:24px clamp(16px,5vw,48px);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  font-size:11px;color:var(--muted);}
+footer a{color:var(--muted);text-decoration:none;}
+footer a:hover{color:var(--cyan);}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">MuDi</a>
+  <div class="nav-links">
+    <a href="/privacy">Privacy</a>
+    <a href="/terms" class="active">Terms</a>
+    <a href="/login" class="btn-back">← Sign In</a>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="page-header">
+    <div class="badge">Legal</div>
+    <h1>Terms &amp; Conditions</h1>
+    <p class="subtitle">Please read these terms carefully before using MuDi.</p>
+    <p class="updated">Last updated: <span id="date"></span></p>
+  </div>
+
+  <div class="toc">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#s1">Acceptance of Terms</a></li>
+      <li><a href="#s2">Description of Service</a></li>
+      <li><a href="#s3">User Accounts</a></li>
+      <li><a href="#s4">Acceptable Use</a></li>
+      <li><a href="#s5">Intellectual Property</a></li>
+      <li><a href="#s6">Copyright &amp; Audio Files</a></li>
+      <li><a href="#s7">Privacy</a></li>
+      <li><a href="#s8">Disclaimer of Warranties</a></li>
+      <li><a href="#s9">Limitation of Liability</a></li>
+      <li><a href="#s10">Account Termination</a></li>
+      <li><a href="#s11">Changes to Terms</a></li>
+      <li><a href="#s12">Governing Law</a></li>
+      <li><a href="#s13">Contact</a></li>
+    </ol>
+  </div>
+
+  <div class="section" id="s1">
+    <h2><span class="sec-num">01</span> Acceptance of Terms</h2>
+    <p>By creating an account, signing in, or using MuDi in any way, you agree to be bound by these Terms &amp; Conditions. If you do not agree, you may not use MuDi.</p>
+    <p>These terms apply to all users of the service, including hosts (room creators) and listeners (room joiners).</p>
+  </div>
+
+  <div class="section" id="s2">
+    <h2><span class="sec-num">02</span> Description of Service</h2>
+    <p>MuDi ("the Service") is a web application that enables users to share and synchronise audio playback across multiple devices in real time. The Service provides:</p>
+    <ul>
+      <li>Room creation and management for audio synchronisation sessions</li>
+      <li>Peer-to-peer file transfer of audio files between room participants</li>
+      <li>Real-time playback synchronisation using NTP clock alignment and WebRTC</li>
+      <li>User account creation and authentication</li>
+    </ul>
+    <div class="highlight">
+      MuDi operates as a signalling and synchronisation service. Audio files are transferred directly between participants' devices using encrypted WebRTC DataChannels. The Service does not store, process, or retain audio file content.
+    </div>
+  </div>
+
+  <div class="section" id="s3">
+    <h2><span class="sec-num">03</span> User Accounts</h2>
+    <p>You are responsible for:</p>
+    <ul>
+      <li>Maintaining the confidentiality of your password</li>
+      <li>All activity that occurs under your account</li>
+      <li>Ensuring that your account information is accurate and up to date</li>
+      <li>Notifying us immediately of any unauthorised use of your account</li>
+    </ul>
+    <p>You may not create accounts using automated means or create accounts on behalf of others without their explicit consent.</p>
+    <p>You must be at least 13 years of age to create an account. By registering, you represent that you meet this requirement.</p>
+  </div>
+
+  <div class="section" id="s4">
+    <h2><span class="sec-num">04</span> Acceptable Use</h2>
+    <p>You agree to use MuDi only for lawful purposes. You must <strong style="color:var(--white)">not</strong>:</p>
+    <ul>
+      <li>Share audio content that you do not have the right to distribute</li>
+      <li>Use the Service to transmit harmful, abusive, threatening, or illegal content</li>
+      <li>Attempt to gain unauthorised access to any part of the Service</li>
+      <li>Interfere with or disrupt the Service or servers connected to it</li>
+      <li>Use automated tools to create accounts or access the Service</li>
+      <li>Reverse engineer, decompile, or attempt to extract source code from the Service</li>
+      <li>Use the Service to infringe any copyright, trademark, or other intellectual property right</li>
+      <li>Impersonate any person or entity</li>
+    </ul>
+    <div class="highlight danger">
+      <strong>Violation of these terms</strong> may result in immediate termination of your account without notice.
+    </div>
+  </div>
+
+  <div class="section" id="s5">
+    <h2><span class="sec-num">05</span> Intellectual Property</h2>
+    <p>MuDi and its original content, features, and functionality are owned by the Service operators and are protected by applicable intellectual property laws.</p>
+    <p>The MuDi name, logo, and "The Digital Aux Cord" tagline are trademarks of the Service operators. You may not use them without prior written consent.</p>
+    <p>Nothing in these Terms grants you any right or licence to use any trademark, logo, or other proprietary information.</p>
+  </div>
+
+  <div class="section" id="s6">
+    <h2><span class="sec-num">06</span> Copyright &amp; Audio Files</h2>
+    <p>MuDi is designed for sharing audio between people who are legally entitled to do so — for example, sharing your own music, royalty-free audio, or content you have licensed.</p>
+    <div class="highlight warn">
+      <strong>You are solely responsible</strong> for ensuring that any audio you share through MuDi does not infringe the copyright or other intellectual property rights of any third party. This includes commercially released music, podcasts, or any other audio protected by copyright.
+    </div>
+    <p>The Service does not monitor or review the content shared between users. By using MuDi to share audio, you represent and warrant that you have all necessary rights and licences to do so.</p>
+    <p>We will respond to valid copyright infringement notices in accordance with applicable law.</p>
+  </div>
+
+  <div class="section" id="s7">
+    <h2><span class="sec-num">07</span> Privacy</h2>
+    <p>Your use of MuDi is also governed by our <a href="/privacy" style="color:var(--cyan)">Privacy Policy</a>, which is incorporated into these Terms by reference. By using MuDi, you consent to the collection and use of information as described in the Privacy Policy.</p>
+  </div>
+
+  <div class="section" id="s8">
+    <h2><span class="sec-num">08</span> Disclaimer of Warranties</h2>
+    <p>MuDi is provided on an <strong style="color:var(--white)">"as is" and "as available"</strong> basis, without any warranties of any kind, either express or implied, including but not limited to:</p>
+    <ul>
+      <li>Warranties of merchantability or fitness for a particular purpose</li>
+      <li>Uninterrupted, timely, or error-free operation of the Service</li>
+      <li>Accuracy or reliability of any information obtained through the Service</li>
+      <li>That defects will be corrected</li>
+    </ul>
+    <p>The Service makes no guarantees regarding audio synchronisation accuracy or WebRTC connection reliability, as these depend on factors outside our control including network conditions and browser capabilities.</p>
+  </div>
+
+  <div class="section" id="s9">
+    <h2><span class="sec-num">09</span> Limitation of Liability</h2>
+    <p>To the fullest extent permitted by applicable law, MuDi and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to:</p>
+    <ul>
+      <li>Loss of data or profits</li>
+      <li>Business interruption</li>
+      <li>Loss of audio content during transfer</li>
+      <li>Any other intangible losses</li>
+    </ul>
+    <p>This limitation applies regardless of whether the damages arise from use or inability to use the Service, breach of contract, negligence, or any other legal theory.</p>
+  </div>
+
+  <div class="section" id="s10">
+    <h2><span class="sec-num">10</span> Account Termination</h2>
+    <p>We reserve the right to suspend or terminate your account at any time, with or without notice, for conduct that we believe:</p>
+    <ul>
+      <li>Violates these Terms &amp; Conditions</li>
+      <li>Is harmful to other users, third parties, or the Service</li>
+      <li>Is otherwise objectionable or illegal</li>
+    </ul>
+    <p>You may delete your account at any time by contacting the app administrator. Upon deletion, your personal data will be removed from our systems within 30 days.</p>
+  </div>
+
+  <div class="section" id="s11">
+    <h2><span class="sec-num">11</span> Changes to Terms</h2>
+    <p>We reserve the right to modify these Terms at any time. We will indicate the date of the most recent revision at the top of this page.</p>
+    <p>Your continued use of MuDi after any changes constitutes your acceptance of the new Terms. If you do not agree to the modified terms, you must stop using the Service.</p>
+  </div>
+
+  <div class="section" id="s12">
+    <h2><span class="sec-num">12</span> Governing Law</h2>
+    <p>These Terms are governed by and construed in accordance with the laws of England and Wales, without regard to conflict of law principles.</p>
+    <p>Any disputes arising from these Terms or your use of the Service shall be subject to the exclusive jurisdiction of the courts of England and Wales.</p>
+  </div>
+
+  <div class="section" id="s13">
+    <h2><span class="sec-num">13</span> Contact</h2>
+    <p>For questions about these Terms &amp; Conditions, please contact the app administrator through the platform or community where you found MuDi.</p>
+    <p>For privacy-related requests, see our <a href="/privacy" style="color:var(--cyan)">Privacy Policy</a>.</p>
+  </div>
+</div>
+
+<footer>
+  <span>© <span id="year"></span> MuDi — The Digital Aux Cord</span>
+  <div style="display:flex;gap:20px;">
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/terms">Terms &amp; Conditions</a>
+    <a href="/login">Sign In</a>
+  </div>
+</footer>
+
+<script>
+const now = new Date();
+document.getElementById('date').textContent =
+  now.toLocaleDateString('en-GB', { year:'numeric', month:'long', day:'numeric' });
+document.getElementById('year').textContent = now.getFullYear();
+</script>
+</body>
+</html>

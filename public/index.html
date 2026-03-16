@@ -1,0 +1,2137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>MuDi — The Digital Aux Cord</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root {
+  --bg:#09091A;--bg2:#0E0E22;--surf:#1A1A38;--surf2:#20204A;
+  --cyan:#00ADB5;--cyan2:#00C8D1;--cdim:rgba(0,173,181,.12);--cglo:rgba(0,173,181,.32);
+  --white:#E4E4F0;--muted:#606088;--bdr:rgba(0,173,181,.18);--amber:#EF9F27;--red:#E24B4A;
+  --fd:'Oxanium',sans-serif;--fm:'Space Mono',monospace;
+  --sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);
+  --sal:env(safe-area-inset-left,0px);--sar:env(safe-area-inset-right,0px);
+  --sp:clamp(14px,4vw,24px);
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+html{height:-webkit-fill-available;}
+body{
+  width:100%;min-height:100dvh;min-height:-webkit-fill-available;
+  background:var(--bg);color:var(--white);font-family:var(--fm);
+  font-size:clamp(13px,3.5vw,15px);
+  display:flex;align-items:flex-start;justify-content:center;
+  overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 70% 50% at 15% 85%,rgba(0,173,181,.06) 0%,transparent 70%),
+             radial-gradient(ellipse 50% 60% at 85% 10%,rgba(80,60,200,.07) 0%,transparent 60%);
+}
+#app{width:100%;max-width:480px;height:100dvh;height:-webkit-fill-available;position:relative;overflow:hidden;z-index:1;}
+.screen{
+  position:absolute;inset:0;
+  padding-top:calc(56px + var(--sat));padding-bottom:calc(20px + var(--sab));
+  padding-left:calc(var(--sp) + var(--sal));padding-right:calc(var(--sp) + var(--sar));
+  display:flex;flex-direction:column;gap:clamp(10px,2.8vw,14px);
+  opacity:0;pointer-events:none;transform:translateX(28px);
+  transition:opacity .3s ease,transform .3s ease;
+  overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+}
+.screen::-webkit-scrollbar{display:none;}
+.screen.active{opacity:1;pointer-events:all;transform:translateX(0);}
+.screen.exit{opacity:0;transform:translateX(-22px);transition-duration:.2s;}
+.topbar{
+  position:absolute;top:0;left:0;right:0;height:calc(56px + var(--sat));padding-top:var(--sat);
+  padding-left:calc(16px + var(--sal));padding-right:calc(16px + var(--sar));
+  display:flex;align-items:center;justify-content:space-between;z-index:30;
+  background:linear-gradient(to bottom,var(--bg2) 60%,transparent 100%);
+  font-size:clamp(10px,2.8vw,12px);color:var(--muted);
+}
+.topbar-title{font-family:var(--fd);color:var(--cyan);letter-spacing:.13em;}
+.back-btn{
+  position:absolute;top:calc(8px + var(--sat));left:calc(8px + var(--sal));z-index:35;
+  background:none;border:none;color:var(--muted);cursor:pointer;
+  font-family:var(--fm);font-size:clamp(10px,2.8vw,12px);
+  min-width:44px;min-height:44px;padding:8px 12px;border-radius:10px;
+  display:flex;align-items:center;justify-content:flex-start;gap:5px;
+  transition:color .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+.back-btn:active{color:var(--cyan);}
+h1,h2,.logo{font-family:var(--fd);}
+.logo{font-weight:800;font-size:clamp(36px,11vw,56px);color:var(--cyan);letter-spacing:-.03em;line-height:1;}
+.tagline{font-size:clamp(8px,2.2vw,10px);color:var(--muted);letter-spacing:.2em;margin-top:5px;}
+h2{font-weight:600;font-size:clamp(17px,4.5vw,21px);}
+.lbl{font-size:clamp(8px,2.2vw,10px);color:var(--muted);letter-spacing:.1em;margin-bottom:5px;text-transform:uppercase;}
+p.sub{font-size:clamp(10px,2.8vw,12px);color:var(--muted);margin-top:4px;line-height:1.5;}
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;min-height:50px;padding:clamp(13px,3.5vw,16px) 20px;border-radius:13px;
+  font-family:var(--fd);font-weight:600;font-size:clamp(13px,3.5vw,15px);letter-spacing:.05em;
+  cursor:pointer;border:none;transition:all .18s;user-select:none;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+}
+.btn:active{transform:scale(.97);}
+.btn:disabled{opacity:.35;cursor:default;}
+.btn-p{background:var(--cyan);color:#060614;}
+.btn-p:not(:disabled):active{background:var(--cyan2);}
+.btn-s{background:var(--surf);color:var(--white);border:1px solid var(--bdr);}
+.btn-s:not(:disabled):active{border-color:var(--cyan);}
+.btn-ghost{background:none;color:var(--muted);border:1px solid var(--bdr);font-size:clamp(11px,3vw,13px);}
+.btn-ghost:active{color:var(--cyan);border-color:var(--cyan);}
+.card{background:var(--surf);border-radius:16px;border:1px solid var(--bdr);padding:clamp(12px,3.5vw,16px);}
+.card-sm{padding:clamp(10px,3vw,14px);border-radius:12px;}
+.inp{
+  background:var(--surf);border:1px solid var(--bdr);border-radius:12px;
+  padding:clamp(13px,3.5vw,15px) 16px;color:var(--white);font-family:var(--fm);
+  font-size:clamp(16px,4.5vw,18px);width:100%;outline:none;
+  transition:border-color .2s,box-shadow .2s;-webkit-appearance:none;
+}
+.inp:focus{border-color:var(--cyan);box-shadow:0 0 0 3px var(--cdim);}
+.inp::placeholder{color:var(--muted);}
+.inp-sm{font-size:clamp(14px,3.8vw,16px);padding:clamp(10px,2.8vw,12px) 14px;}
+.inp-code{text-align:center;letter-spacing:.2em;font-size:clamp(16px,5.5vw,24px);}
+.badge{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;
+  font-size:clamp(9px,2.4vw,11px);letter-spacing:.03em;white-space:nowrap;
+}
+.badge-ok{background:rgba(0,173,181,.1);color:var(--cyan);border:1px solid rgba(0,173,181,.26);}
+.badge-wait{background:rgba(239,159,39,.1);color:var(--amber);border:1px solid rgba(239,159,39,.22);}
+.badge-red{background:rgba(226,75,74,.1);color:var(--red);border:1px solid rgba(226,75,74,.22);}
+.dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
+.dot-blink{animation:blink 1s step-end infinite;}
+@keyframes blink{50%{opacity:0;}}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:clamp(8px,2.2vw,9px);letter-spacing:.1em;}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--bdr);}
+.room-code{
+  font-family:var(--fd);font-weight:800;font-size:clamp(28px,8.5vw,46px);
+  color:var(--cyan);letter-spacing:.14em;text-shadow:0 0 24px var(--cglo);text-align:center;
+}
+.room-name-big{
+  font-family:var(--fd);font-weight:600;font-size:clamp(18px,5vw,26px);
+  color:var(--white);text-align:center;margin-bottom:2px;
+}
+.code-expire{font-size:clamp(9px,2.4vw,11px);color:var(--muted);text-align:center;margin-top:4px;}
+.stat-grid{display:grid;gap:clamp(4px,1.5vw,8px);}
+.stat{text-align:center;min-width:0;}
+.stat-lbl{font-size:clamp(7px,2vw,9px);color:var(--muted);letter-spacing:.06em;line-height:1.2;}
+.stat-val{font-size:clamp(11px,3vw,13px);color:var(--cyan);margin-top:3px;}
+.av-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;}
+.av-ring{position:absolute;inset:-8px;border-radius:50%;border:1.5px solid var(--cyan);box-shadow:0 0 14px var(--cglo),inset 0 0 14px var(--cdim);opacity:0;transition:opacity .5s;}
+.av-ring.on{opacity:1;}
+@keyframes pulse-ring{0%{transform:scale(1);opacity:.6;}100%{transform:scale(1.65);opacity:0;}}
+.av-pulse{position:absolute;inset:-8px;border-radius:50%;border:1.5px solid var(--cyan);animation:pulse-ring 2.2s ease-out infinite;}
+.av{
+  width:clamp(50px,14vw,68px);height:clamp(50px,14vw,68px);border-radius:50%;background:var(--surf2);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--fd);font-size:clamp(13px,3.8vw,17px);font-weight:700;color:var(--cyan);border:1px solid var(--bdr);
+}
+.prog-track{height:4px;background:var(--surf2);border-radius:2px;overflow:hidden;}
+.prog-fill{height:100%;background:var(--cyan);border-radius:2px;width:0%;transition:width .08s linear;box-shadow:0 0 6px var(--cglo);}
+.file-chip{
+  display:flex;align-items:center;gap:12px;background:var(--surf);border:1px solid var(--bdr);
+  border-radius:13px;padding:clamp(11px,3vw,14px);cursor:pointer;transition:border-color .2s;min-height:62px;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+}
+.file-chip:active{border-color:var(--cyan);}
+.file-chip.disabled{opacity:.4;cursor:default;pointer-events:none;}
+.file-icon{
+  width:clamp(34px,9vw,40px);height:clamp(34px,9vw,40px);border-radius:9px;background:var(--cdim);
+  display:flex;align-items:center;justify-content:center;color:var(--cyan);font-size:clamp(16px,4.5vw,20px);flex-shrink:0;
+}
+input[type=range].seek{
+  -webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;outline:none;
+  background:linear-gradient(to right,var(--cyan) var(--p,0%),var(--surf2) var(--p,0%));
+  cursor:pointer;touch-action:none;padding:10px 0;background-clip:content-box;
+}
+input[type=range].seek::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:var(--cyan);cursor:pointer;box-shadow:0 0 8px var(--cglo);transition:transform .1s;}
+input[type=range].seek::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--cyan);border:none;box-shadow:0 0 8px var(--cglo);}
+input[type=range].seek:active::-webkit-slider-thumb{transform:scale(1.3);}
+input[type=range].seek:disabled{opacity:.4;cursor:default;}
+.ctrl{
+  width:clamp(44px,12vw,52px);height:clamp(44px,12vw,52px);border-radius:50%;
+  background:var(--surf);border:1px solid var(--bdr);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:all .18s;color:var(--white);font-size:clamp(14px,4vw,18px);
+  flex-shrink:0;touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+}
+.ctrl:active{border-color:var(--cyan);color:var(--cyan);}
+.ctrl.play-btn{width:clamp(58px,16vw,68px);height:clamp(58px,16vw,68px);background:var(--cyan);border-color:var(--cyan);color:#060614;font-size:clamp(20px,5.5vw,24px);}
+.ctrl.play-btn:active{box-shadow:0 0 28px var(--cglo);}
+.ctrl:disabled{opacity:.3;cursor:default;}
+.wf{display:flex;align-items:center;gap:3px;height:24px;}
+.wb{width:3px;border-radius:2px;background:var(--cyan);opacity:.6;animation:wave .9s ease-in-out infinite;transform-origin:bottom;}
+.wb:nth-child(1){animation-delay:.00s;height:13px}.wb:nth-child(2){animation-delay:.09s;height:20px}
+.wb:nth-child(3){animation-delay:.17s;height:9px}.wb:nth-child(4){animation-delay:.05s;height:24px}
+.wb:nth-child(5){animation-delay:.21s;height:17px}.wb:nth-child(6){animation-delay:.13s;height:13px}
+.wb:nth-child(7){animation-delay:.03s;height:20px}.wb:nth-child(8){animation-delay:.19s;height:9px}
+@keyframes wave{0%,100%{transform:scaleY(.3);}50%{transform:scaleY(1);}}
+.wf.paused .wb{animation-play-state:paused;transform:scaleY(.3);}
+@keyframes float-art{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
+@keyframes spin-dashed{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+@keyframes orb-pulse{0%,100%{opacity:.7;transform:translateX(-50%) scale(1);}50%{opacity:.35;transform:translateX(-50%) scale(1.1);}}
+@keyframes dots{0%,20%{content:'';}40%{content:'.';}60%{content:'..';}80%,100%{content:'...';}  }
+@keyframes pulse-ring{0%{transform:scale(1);opacity:.6;}100%{transform:scale(1.8);opacity:0;}}
+.toast{
+  position:fixed;bottom:calc(18px + var(--sab));left:var(--sp);right:var(--sp);
+  transform:translateY(12px);background:var(--surf2);border:1px solid var(--bdr);
+  border-radius:10px;padding:9px 16px;font-size:clamp(10px,2.8vw,12px);color:var(--cyan);
+  text-align:center;word-break:break-word;opacity:0;transition:all .3s;z-index:200;pointer-events:none;
+}
+.toast.on{opacity:1;transform:translateY(0);}
+/* Reconnect banner */
+#reconnect-banner{
+  display:none;position:fixed;top:calc(var(--sat) + 2px);left:var(--sp);right:var(--sp);
+  background:rgba(239,159,39,.15);border:1px solid rgba(239,159,39,.35);
+  border-radius:8px;padding:7px 14px;z-index:150;
+  align-items:center;gap:8px;font-size:clamp(9px,2.5vw,11px);color:var(--amber);
+}
+/* Password toggle eye */
+.pw-wrap{position:relative;}
+.pw-wrap .inp{padding-right:48px;}
+.pw-eye{
+  position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:16px;padding:6px;min-width:36px;min-height:36px;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+/* Share button */
+.share-btn{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:10px;
+  padding:8px 16px;color:var(--cyan);font-family:var(--fm);
+  font-size:clamp(10px,2.8vw,12px);cursor:pointer;transition:all .2s;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+  min-height:40px;
+}
+.share-btn:active{border-color:var(--cyan);background:var(--cdim);}
+/* Lock icon badge */
+.lock-badge{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+  border-radius:999px;font-size:clamp(8px,2.2vw,10px);
+  background:rgba(239,159,39,.1);color:var(--amber);border:1px solid rgba(239,159,39,.22);
+}
+#qr-wrap{display:flex;justify-content:center;}
+#qr-wrap canvas,#qr-wrap img{border-radius:10px;display:block;max-width:min(150px,40vw)!important;height:auto!important;}
+.dots-anim::after{content:'';animation:dots 1.4s infinite;}
+/* Role visibility is JS-only — no CSS default hide, avoids '' revert bug */
+select,input,button,textarea{font-family:inherit;}
+</style>
+</head>
+<body>
+<div id="app">
+
+<div class="toast" id="toast"></div>
+
+<!-- Reconnect banner (shown on network drop) -->
+<div id="reconnect-banner">
+  <span class="dot dot-blink" style="background:var(--amber);"></span>
+  <span>Connection lost — reconnecting</span>
+  <span class="dots-anim" style="margin-left:2px;"></span>
+</div>
+
+<!-- ══ HOME ═══════════════════════════════════════════════════════════════ -->
+<div class="screen active" id="s-home">
+  <div class="topbar">
+    <span id="clock-home">--:--</span>
+    <span class="topbar-title">MuDi</span>
+    <span id="ntp-status-home" style="font-size:clamp(8px,2.2vw,10px);">NTP ◌</span>
+  </div>
+  <div style="position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:0;">
+    <div style="position:absolute;width:min(300px,80vw);height:min(300px,80vw);border-radius:50%;top:5%;left:50%;background:radial-gradient(circle,rgba(0,173,181,.07) 0%,transparent 70%);animation:orb-pulse 4s ease-in-out infinite;"></div>
+  </div>
+  <div style="position:relative;z-index:1;margin-top:clamp(12px,4vw,24px);">
+    <div class="logo">MuDi</div>
+    <div class="tagline">THE DIGITAL AUX CORD</div>
+  </div>
+
+  <!-- Rejoin banner — shown when a saved session exists -->
+  <div id="rejoin-banner" style="display:none;flex-direction:column;gap:10px;position:relative;z-index:1;">
+    <div class="card card-sm" style="border-color:var(--cyan);background:rgba(0,173,181,.06);">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <div style="width:34px;height:34px;border-radius:50%;background:var(--cdim);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">🔗</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:clamp(11px,3vw,13px);font-weight:500;color:var(--white);">Active session found</div>
+          <div style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);margin-top:2px;">
+            <span id="rejoin-room-name" style="color:var(--cyan);"></span>
+            &nbsp;·&nbsp;
+            <span id="rejoin-role"></span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-p" id="btn-rejoin" style="flex:2;min-height:42px;font-size:clamp(12px,3.2vw,14px);">↩ Rejoin</button>
+        <button class="btn btn-ghost" id="btn-dismiss-rejoin" style="flex:1;min-height:42px;font-size:clamp(10px,2.8vw,12px);">Dismiss</button>
+      </div>
+    </div>
+    <div class="divider">or start fresh</div>
+  </div>
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;z-index:1;min-height:0;">
+    <div style="position:relative;width:min(148px,40vw);height:min(148px,40vw);display:flex;align-items:center;justify-content:center;">
+      <div style="position:absolute;inset:0;border-radius:50%;border:1px solid rgba(0,173,181,.1);animation:pulse-ring 2.4s ease-out infinite;"></div>
+      <div style="position:absolute;inset:13%;border-radius:50%;border:1px solid rgba(0,173,181,.18);animation:pulse-ring 2.4s ease-out infinite .55s;"></div>
+      <div style="position:absolute;inset:26%;border-radius:50%;border:1px solid rgba(0,173,181,.3);animation:pulse-ring 2.4s ease-out infinite 1.1s;"></div>
+      <div style="width:min(52px,14vw);height:min(52px,14vw);border-radius:50%;background:var(--cyan);display:flex;align-items:center;justify-content:center;box-shadow:0 0 32px var(--cglo);font-size:min(22px,6vw);">🎵</div>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:clamp(10px,3vw,14px);position:relative;z-index:1;">
+    <button class="btn btn-p" id="btn-host">◈ &nbsp;Host a Room</button>
+    <button class="btn btn-s" id="btn-join">◉ &nbsp;Join a Room</button>
+  </div>
+  <p style="text-align:center;font-size:clamp(8px,2.2vw,10px);color:var(--muted);margin-top:clamp(10px,3vw,16px);letter-spacing:.06em;">
+    Sub-15ms sync · WebRTC P2P · End-to-end encrypted
+  </p>
+</div>
+
+<!-- ══ CREATE ROOM ════════════════════════════════════════════════════════ -->
+<div class="screen" id="s-create">
+  <button class="back-btn" id="back-create">← back</button>
+  <div class="topbar"><span></span><span class="topbar-title">Create Room</span><span></span></div>
+
+  <div style="margin-top:clamp(8px,3vw,16px);">
+    <div class="lbl">Room Name</div>
+    <h2>Set up your room</h2>
+    <p class="sub">Give it a name your listener will recognise</p>
+  </div>
+
+  <div>
+    <div class="lbl">Room Name <span style="color:var(--muted);font-size:9px;">(optional — min 3 chars)</span></div>
+    <input class="inp inp-sm" id="room-name-input" type="text" placeholder="e.g. Late Night Vibes"
+      maxlength="32" autocomplete="off"
+      oninput="onRoomNameInput(this.value)">
+    <div id="create-name-err" style="font-size:clamp(9px,2.5vw,11px);color:var(--red);margin-top:5px;min-height:16px;"></div>
+  </div>
+
+  <div>
+    <div class="lbl">Password <span style="color:var(--muted);font-size:9px;">(optional)</span></div>
+    <div class="pw-wrap">
+      <input class="inp inp-sm" id="room-pw-input" type="password" placeholder="Leave blank for public room"
+        maxlength="32" autocomplete="new-password">
+      <button class="pw-eye" onclick="togglePwVis('room-pw-input',this)" type="button">👁</button>
+    </div>
+    <p style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);margin-top:5px;">
+      If set, listeners will need this password to join
+    </p>
+  </div>
+
+  <div id="create-err" style="font-size:clamp(10px,2.8vw,12px);color:var(--red);text-align:center;min-height:16px;"></div>
+
+  <button class="btn btn-p" id="btn-create-room" onclick="onHostCreate()">Create Room →</button>
+</div>
+
+<!-- ══ HOST ROOM (waiting screen) ════════════════════════════════════════ -->
+<div class="screen" id="s-host">
+  <button class="back-btn" id="back-host">← back</button>
+  <div class="topbar">
+    <span></span>
+    <span class="topbar-title">Host Room</span>
+    <span id="host-ntp" class="badge badge-wait"><span class="dot dot-blink"></span>NTP</span>
+  </div>
+
+  <!-- Room name + lock indicator -->
+  <div style="text-align:center;margin-top:clamp(6px,2.5vw,12px);">
+    <div class="room-name-big" id="room-name-display">—</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px;">
+      <div class="room-code" id="room-code-display">---</div>
+      <span class="lock-badge" id="lock-badge" style="display:none;">🔒 password</span>
+    </div>
+    <div class="code-expire" style="margin-top:4px;">
+      Tap code to copy &nbsp;·&nbsp; expires in <span id="expire-countdown">10:00</span>
+    </div>
+  </div>
+
+  <!-- Share + QR row -->
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div id="qr-wrap" style="flex-shrink:0;"></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+      <button class="share-btn" onclick="shareRoom()">
+        <span>⬆</span> Share Room Link
+      </button>
+      <p style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);line-height:1.4;">
+        Share the link or scan the QR to let someone join
+      </p>
+    </div>
+  </div>
+
+  <div class="card card-sm">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <span class="lbl" style="margin:0;">Clock Sync</span>
+      <span class="badge badge-wait" id="ntp-lock-badge"><span class="dot dot-blink"></span>Syncing...</span>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:1fr 1fr 1fr;">
+      <div class="stat"><div class="stat-lbl">NTP Offset</div><div class="stat-val" id="ntp-offset-val">—</div></div>
+      <div class="stat"><div class="stat-lbl">RTT</div><div class="stat-val" id="ntp-rtt-val">—</div></div>
+      <div class="stat"><div class="stat-lbl">Samples</div><div class="stat-val" id="ntp-samples-val">0</div></div>
+    </div>
+  </div>
+
+  <div class="card card-sm" id="peer-wait-card" style="display:flex;align-items:center;gap:10px;">
+    <div style="width:8px;height:8px;border-radius:50%;background:var(--amber);animation:blink 1s step-end infinite;flex-shrink:0;"></div>
+    <div>
+      <div style="font-size:clamp(11px,3vw,13px);">Waiting for listener</div>
+      <div class="dots-anim" style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);">Share the code or link above</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ JOIN ROOM ══════════════════════════════════════════════════════════ -->
+<div class="screen" id="s-join">
+  <button class="back-btn" id="back-join">← back</button>
+  <div class="topbar"><span></span><span class="topbar-title">Join Room</span><span></span></div>
+
+  <div style="margin-top:clamp(8px,3vw,16px);">
+    <div class="lbl">Room Code</div>
+    <h2>Join a room</h2>
+    <p class="sub" id="join-room-name">Enter the code or scan QR from the host</p>
+  </div>
+
+  <input class="inp inp-code" id="code-input" type="text" inputmode="text"
+    autocomplete="off" autocorrect="off" autocapitalize="on" spellcheck="false"
+    placeholder="Code (ABC-123) or room name"
+    oninput="this.value=this.value.replace(/[^\w\s-]/g,'').slice(0,32)">
+  <p style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);text-align:center;margin-top:6px;">
+    Enter the room code <em>or</em> the room name
+  </p>
+
+  <!-- Password row — always visible; hint updates when room info is known -->
+  <div id="pw-row">
+    <div class="lbl" style="display:flex;align-items:center;gap:6px;">
+      Password
+      <span id="pw-required-badge" style="display:none;" class="lock-badge">🔒 required</span>
+    </div>
+    <div class="pw-wrap">
+      <input class="inp inp-sm" id="pw-input" type="password"
+        placeholder="Leave blank if no password"
+        maxlength="32" autocomplete="current-password">
+      <button class="pw-eye" onclick="togglePwVis('pw-input',this)" type="button">👁</button>
+    </div>
+    <p id="pw-hint" style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);margin-top:5px;">
+      Leave blank if the room has no password
+    </p>
+  </div>
+
+  <div id="join-err" style="font-size:clamp(10px,2.8vw,12px);color:var(--red);text-align:center;min-height:18px;"></div>
+  <button class="btn btn-p" id="btn-connect">Connect →</button>
+
+  <div class="divider">or</div>
+  <button class="btn btn-ghost" onclick="$('code-input').focus();toast('Scan the QR code from the host screen')">
+    Scan QR Code
+  </button>
+</div>
+
+<!-- ══ ROOM ═══════════════════════════════════════════════════════════════ -->
+<div class="screen" id="s-room">
+  <div class="topbar">
+    <span class="badge" id="conn-badge"><span class="dot dot-blink"></span>Connecting</span>
+    <span class="topbar-title" id="room-code-top">---</span>
+    <button class="back-btn" id="back-room" style="position:static;min-width:auto;min-height:auto;padding:6px 10px;font-size:clamp(9px,2.5vw,11px);">Leave</button>
+  </div>
+
+  <!-- Avatars -->
+  <div style="display:flex;align-items:center;justify-content:center;padding:clamp(6px,2.5vw,12px) 0;">
+    <div style="text-align:center;">
+      <div class="av-wrap">
+        <div class="av-ring" id="av-ring-you"></div>
+        <div class="av-pulse"></div>
+        <div class="av" id="av-you">You</div>
+      </div>
+      <div style="font-size:clamp(8px,2.2vw,9px);color:var(--cyan);margin-top:7px;letter-spacing:.1em;" id="role-label-you">—</div>
+    </div>
+    <div style="flex:1;margin:0 clamp(8px,3vw,14px);position:relative;">
+      <div style="height:1px;background:linear-gradient(to right,var(--cyan),rgba(0,173,181,.2));"></div>
+      <div id="p2p-label" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);padding:2px 7px;border-radius:999px;border:1px solid var(--bdr);font-size:clamp(7px,2vw,9px);color:var(--muted);white-space:nowrap;">Connecting</div>
+    </div>
+    <div style="text-align:center;">
+      <div class="av-wrap">
+        <div class="av-ring" id="av-ring-peer"></div>
+        <div class="av-pulse" style="animation-delay:.9s;"></div>
+        <div class="av" id="av-peer">?</div>
+      </div>
+      <div style="font-size:clamp(8px,2.2vw,9px);color:var(--cyan);margin-top:7px;letter-spacing:.1em;" id="role-label-peer">—</div>
+    </div>
+  </div>
+
+  <!-- NTP stats -->
+  <div class="card card-sm">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span class="lbl" style="margin:0;">Global Clock</span>
+      <span class="badge badge-wait" id="room-ntp-badge"><span class="dot dot-blink"></span>Syncing</span>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="stat"><div class="stat-lbl">Offset</div><div class="stat-val" id="r-ntp-offset">—</div></div>
+      <div class="stat"><div class="stat-lbl">RTT</div><div class="stat-val" id="r-ntp-rtt">—</div></div>
+      <div class="stat"><div class="stat-lbl">Jitter</div><div class="stat-val" id="r-ntp-jitter">—</div></div>
+      <div class="stat"><div class="stat-lbl">Transport</div><div class="stat-val" id="r-transport">—</div></div>
+    </div>
+  </div>
+
+  <!-- MASTER: file section -->
+  <div class="master-only" id="file-section-master" style="display:flex;flex-direction:column;gap:10px;">
+    <div class="lbl">Audio File</div>
+    <label for="file-input" class="file-chip" id="file-chip">
+      <div class="file-icon">♫</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:clamp(12px,3.2vw,14px);font-weight:500;" id="file-chip-title">Select audio file</div>
+        <div style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);margin-top:2px;">MP3 · WAV · FLAC · AAC · OGG</div>
+      </div>
+      <span style="color:var(--muted);font-size:clamp(16px,4.5vw,20px);flex-shrink:0;">›</span>
+    </label>
+    <input type="file" id="file-input" accept="audio/*"
+      style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"
+      onchange="onFileSelect(event)">
+    <div id="transfer-block" style="display:none;">
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div class="file-icon">♫</div>
+          <div style="flex:1;min-width:0;">
+            <div id="send-fname" style="font-size:clamp(11px,3vw,13px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+            <div id="send-fsize" style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);"></div>
+          </div>
+          <span class="badge badge-ok" id="hash-badge-send" style="display:none;flex-shrink:0;"><span class="dot"></span>SHA-256 ✓</span>
+        </div>
+        <div class="prog-track"><div class="prog-fill" id="prog-send"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:clamp(8px,2.2vw,9px);color:var(--muted);">
+          <span id="prog-send-label">Sending...</span>
+          <span>WebRTC P2P</span>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-p" id="sync-play-btn" style="display:none;" onclick="onSyncPlay()">▶ &nbsp;Sync Play</button>
+  </div>
+
+  <!-- FOLLOWER: receive section -->
+  <div class="follower-only" id="file-section-follower" style="display:flex;flex-direction:column;gap:10px;">
+    <div id="wait-file" class="card card-sm" style="text-align:center;color:var(--muted);font-size:clamp(10px,2.8vw,12px);padding:clamp(14px,4vw,18px);">
+      <span class="dots-anim">Waiting for host to share a file</span>
+    </div>
+    <div id="recv-block" style="display:none;">
+      <div class="lbl">Receiving</div>
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div class="file-icon">♫</div>
+          <div style="flex:1;min-width:0;">
+            <div id="recv-fname" style="font-size:clamp(11px,3vw,13px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+            <div id="recv-fsize" style="font-size:clamp(9px,2.5vw,11px);color:var(--muted);"></div>
+          </div>
+          <span class="badge badge-ok" id="hash-badge-recv" style="display:none;flex-shrink:0;"><span class="dot"></span>Verified</span>
+        </div>
+        <div class="prog-track"><div class="prog-fill" id="prog-recv"></div></div>
+        <div style="margin-top:6px;font-size:clamp(8px,2.2vw,9px);color:var(--muted);" id="prog-recv-label">Receiving...</div>
+      </div>
+    </div>
+    <div id="wait-sync-msg" style="display:none;" class="card card-sm">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge badge-ok"><span class="dot"></span>Ready</span>
+        <span style="font-size:clamp(10px,2.8vw,12px);color:var(--muted);" class="dots-anim">Waiting for host to start sync play</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PLAYER ════════════════════════════════════════════════════════════ -->
+<div class="screen" id="s-player">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <button class="back-btn" id="back-player" style="position:static;min-width:auto;min-height:auto;padding:6px 10px;font-size:clamp(9px,2.5vw,11px);">← Room</button>
+    <span class="topbar-title" id="player-room-name">Now Playing</span>
+    <span class="badge badge-ok" id="player-badge"><span class="dot"></span>Synced</span>
+  </div>
+
+  <!-- Album art -->
+  <div style="display:flex;justify-content:center;align-items:center;padding:clamp(4px,2vw,10px) 0;flex-shrink:0;">
+    <div style="position:relative;width:min(160px,40vw);height:min(160px,40vw);display:flex;align-items:center;justify-content:center;">
+      <div style="position:absolute;inset:min(-20px,-5vw);border-radius:50%;border:1px dashed rgba(0,173,181,.2);animation:spin-dashed 28s linear infinite;"></div>
+      <div id="sync-ring" style="position:absolute;inset:min(-9px,-2.5vw);border-radius:50%;border:2px solid var(--cyan);box-shadow:0 0 20px var(--cglo),inset 0 0 20px var(--cdim);transition:opacity .5s;"></div>
+      <div id="album-art" style="width:100%;height:100%;border-radius:50%;background:linear-gradient(145deg,#141430,#1e1e48);display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid var(--bdr);animation:float-art 4.5s ease-in-out infinite;overflow:hidden;">
+        <div style="font-size:min(40px,12vw);">🌙</div>
+        <div id="player-status-text" style="font-size:clamp(7px,2vw,9px);color:var(--muted);margin-top:3px;letter-spacing:.1em;">PLAYING</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Track name + waveform -->
+  <div style="text-align:center;flex-shrink:0;">
+    <div id="track-name" style="font-family:var(--fd);font-size:clamp(14px,4vw,19px);font-weight:600;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 8px;">—</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;">
+      <div class="wf" id="player-wf">
+        <div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div>
+        <div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div>
+      </div>
+      <span id="listener-count" style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);">—</span>
+    </div>
+  </div>
+
+  <!-- ── SEEK BAR + TIMER (always visible, both roles) ── -->
+  <div style="flex-shrink:0;padding:0 4px;">
+    <input type="range" class="seek" id="seek-bar" min="0" max="100" value="0"
+      oninput="onSeekDrag(this)" onchange="onSeekCommit(this)" step="0.1"
+      style="width:100%;">
+    <div style="display:flex;justify-content:space-between;font-size:clamp(10px,2.8vw,13px);color:var(--muted);margin-top:6px;font-family:var(--fm);">
+      <span id="cur-time">0:00</span>
+      <span id="duration">0:00</span>
+    </div>
+  </div>
+
+  <!-- ── TRANSPORT CONTROLS ── -->
+  <!-- Master controls: ⏮ ↩ ▶/⏸ ⏹ ⏭ -->
+  <div id="master-controls" style="display:none;align-items:center;justify-content:center;gap:clamp(10px,3.5vw,16px);flex-shrink:0;">
+    <button class="ctrl" id="btn-skip-back" onclick="skipBack()" title="Back 10s" style="font-size:clamp(14px,4vw,18px);">⏮</button>
+    <button class="ctrl" id="btn-replay"    onclick="onReplay()"  title="Replay from start" style="font-size:clamp(14px,4vw,18px);">↩</button>
+    <button class="ctrl play-btn" id="btn-play-pause" onclick="onPlayPause()">▶</button>
+    <button class="ctrl" id="btn-stop"      onclick="onStop()"    title="Stop" style="font-size:clamp(14px,4vw,18px);">⏹</button>
+    <button class="ctrl" id="btn-skip-fwd"  onclick="skipFwd()"  title="Forward 10s" style="font-size:clamp(14px,4vw,18px);">⏭</button>
+  </div>
+  <!-- Follower: play/pause display only (no action) -->
+  <div id="follower-controls" style="display:none;align-items:center;justify-content:center;flex-shrink:0;">
+    <div style="text-align:center;">
+      <div class="ctrl play-btn" id="follower-play-icon" style="margin:0 auto;cursor:default;opacity:.85;">▶</div>
+      <div style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);margin-top:6px;letter-spacing:.06em;">Synced to host</div>
+    </div>
+  </div>
+
+  <!-- Master only: share another file -->
+  <div id="share-file-row" style="display:none;flex-shrink:0;">
+    <button class="btn btn-s" id="btn-share-file" onclick="onShareAnotherFile()" style="width:100%;min-height:44px;font-size:clamp(11px,3vw,13px);">
+      ♫ &nbsp;Share Another File
+    </button>
+  </div>
+
+  <!-- Sync metrics card -->
+  <div class="card card-sm" style="flex-shrink:0;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span class="lbl" style="margin:0;">Live Sync</span>
+      <span style="font-size:clamp(8px,2.2vw,10px);color:var(--muted);" id="sync-mode-label">In sync</span>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="stat"><div class="stat-lbl">Drift</div><div class="stat-val" id="drift-val">0.0ms</div></div>
+      <div class="stat"><div class="stat-lbl">Rate</div><div class="stat-val" id="rate-val">1.000×</div></div>
+      <div class="stat"><div class="stat-lbl">RTT</div><div class="stat-val" id="player-rtt">—</div></div>
+      <div class="stat"><div class="stat-lbl">Corrections</div><div class="stat-val" id="corr-count">0</div></div>
+    </div>
+  </div>
+
+</div>
+
+</div><!-- #app -->
+<script>
+function togglePwVis(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.textContent = el.type === 'password' ? '👁' : '🙈';
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   CONFIG
+═══════════════════════════════════════════════════════════ */
+const STUN_SERVERS   = [{ urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }];
+const CHUNK_SIZE     = 16384;   // 16 KB DataChannel chunk
+const NTP_INTERVAL   = 5000;    // re-probe NTP every 5s
+const DRIFT_INTERVAL = 2000;    // check drift every 2s
+const SEEK_INTERVAL  = 250;     // UI seek update
+const MICRO_THRESH   = 20;      // ms — time-stretch below this is not worth it
+const MACRO_THRESH   = 200;     // ms — hard-seek above this
+
+/* ═══════════════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════════════ */
+const S = {
+  socket     : null,
+  role       : null,    // 'master' | 'follower'
+  code       : null,
+  peerSid    : null,
+  roomName      : null,
+  hasPassword   : false,
+  reconnecting  : false,
+  listenerCount : 0,
+  maxListeners  : 10,
+  readyCount    : 0,
+  // NTP
+  ntpOffset  : 0,
+  ntpRtt     : 0,
+  ntpJitter  : 0,
+  ntpHistory : [],
+  ntpTimer   : null,
+  // WebRTC — multi-listener: Map<peerSid, { pc, dc, pendingICE, remoteDescSet }>
+  peers          : new Map(),
+  pc             : null,
+  dc             : null,
+  pendingICE     : [],
+  pendingFile    : null,    // file selected before P2P was ready
+  remoteDescSet  : false,
+  // File (master)
+  fileRaw    : null,    // original File object
+  fileBuf    : null,    // ArrayBuffer
+  fileHash   : null,
+  fileName   : null,
+  fileSize   : 0,
+  // Audio
+  audioCtx       : null,
+  audioBuf       : null,    // decoded AudioBuffer
+  audioSrc       : null,    // AudioBufferSourceNode
+  audioStartCtx  : 0,       // AudioContext.currentTime when .start() was called
+  globalPlayAt   : 0,       // server-absolute ms when playback was scheduled
+  playStartPos   : 0,       // track position (s) at schedule time
+  playing        : false,
+  duration       : 0,
+  // Timers
+  driftTimer     : null,
+  seekTimer      : null,
+  corrCount      : 0,
+  _manualStop    : false,   // prevents onended from overriding UI after manual stop
+  _reconnectBannerTimer: null,
+  // UI
+  seekDragging   : false,
+};
+
+/* ═══════════════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════════════ */
+const $  = id => document.getElementById(id);
+const gn = () => performance.now() + performance.timeOrigin + S.ntpOffset;  // NTP-adjusted ms
+const fmtTime = s => { const i=Math.floor(s); return `${Math.floor(i/60)}:${(i%60).toString().padStart(2,'0')}`; };
+
+/* SHA-256 — uses Web Crypto when available (HTTPS / localhost),
+   falls back to a pure-JS implementation for plain HTTP on LAN */
+async function sha256hex(buf) {
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const h = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return sha256js(new Uint8Array(buf));
+}
+
+// Pure-JS SHA-256 — correct RFC 6234 implementation, works on plain HTTP
+function sha256js(data) {
+  const K = new Uint32Array([
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+  ]);
+  const HASH = new Uint32Array([
+    0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19,
+  ]);
+
+  function rotr32(x, n) { return (x >>> n) | (x << (32 - n)); }
+  function add32(...args) { return args.reduce((a,b) => (a + b) >>> 0); }
+
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const msgLen = bytes.length;
+  // Pad: append 0x80, zeros, then 64-bit big-endian bit-length
+  const padLen = ((msgLen + 9 + 63) & ~63);
+  const msg    = new Uint8Array(padLen);
+  msg.set(bytes);
+  msg[msgLen] = 0x80;
+  const bitLen = msgLen * 8;
+  const dv     = new DataView(msg.buffer);
+  dv.setUint32(padLen - 4, bitLen >>> 0, false);
+  dv.setUint32(padLen - 8, (bitLen / 2**32) >>> 0, false);
+
+  const h = new Uint32Array(HASH);
+  const w = new Uint32Array(64);
+
+  for (let i = 0; i < msg.length; i += 64) {
+    const blk = new DataView(msg.buffer, i, 64);
+    for (let j = 0; j < 16; j++) w[j] = blk.getUint32(j * 4, false);
+    for (let j = 16; j < 64; j++) {
+      const s0 = rotr32(w[j-15],7) ^ rotr32(w[j-15],18) ^ (w[j-15] >>> 3);
+      const s1 = rotr32(w[j-2],17) ^ rotr32(w[j-2],19)  ^ (w[j-2]  >>> 10);
+      w[j] = add32(w[j-16], s0, w[j-7], s1);
+    }
+    let [a,b,c,d,e,f,g,hh] = h;
+    for (let j = 0; j < 64; j++) {
+      const S1   = rotr32(e,6)  ^ rotr32(e,11)  ^ rotr32(e,25);
+      const ch   = (e & f) ^ (~e & g);
+      const tmp1 = add32(hh, S1, ch, K[j], w[j]);
+      const S0   = rotr32(a,2)  ^ rotr32(a,13)  ^ rotr32(a,22);
+      const maj  = (a & b) ^ (a & c) ^ (b & c);
+      const tmp2 = add32(S0, maj);
+      hh=g; g=f; f=e; e=add32(d,tmp1); d=c; c=b; b=a; a=add32(tmp1,tmp2);
+    }
+    h[0]=add32(h[0],a); h[1]=add32(h[1],b); h[2]=add32(h[2],c); h[3]=add32(h[3],d);
+    h[4]=add32(h[4],e); h[5]=add32(h[5],f); h[6]=add32(h[6],g); h[7]=add32(h[7],hh);
+  }
+  return Array.from(h).map(n => n.toString(16).padStart(8,'0')).join('');
+}
+
+let _toastTmr;
+function toast(msg, dur=3000) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(_toastTmr);
+  _toastTmr = setTimeout(() => t.classList.remove('on'), dur);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCREEN NAVIGATION
+═══════════════════════════════════════════════════════════ */
+let curScreen = 'home';
+function goScreen(name) {
+  const from = $('s-' + curScreen);
+  const to   = $('s-' + name);
+  if (from === to) return;
+  from.classList.add('exit');
+  from.classList.remove('active');
+  setTimeout(() => from.classList.remove('exit'), 320);
+  to.classList.add('active');
+  curScreen = name;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NTP — 4-STEP HANDSHAKE
+   offset = ((T2-T1) + (T3-T4)) / 2
+═══════════════════════════════════════════════════════════ */
+function ntpProbe() {
+  S.socket.emit('ntp:req', { t1: performance.now() + performance.timeOrigin });
+}
+
+function ntpHandle({ t1, t2, t3 }) {
+  const t4  = performance.now() + performance.timeOrigin;
+  const offset = ((t2 - t1) + (t3 - t4)) / 2;
+  const rtt    = (t4 - t1) - (t3 - t2);
+
+  S.ntpHistory.push({ offset, rtt });
+  if (S.ntpHistory.length > 8) S.ntpHistory.shift();
+
+  // Median offset (robust against jitter outliers)
+  const sorted = [...S.ntpHistory].sort((a, b) => a.offset - b.offset);
+  S.ntpOffset = sorted[sorted.length >> 1].offset;
+  S.ntpRtt    = Math.round(rtt);
+
+  // Jitter = std-dev of last 4 RTTs
+  if (S.ntpHistory.length >= 2) {
+    const rtts = S.ntpHistory.slice(-4).map(x => x.rtt);
+    const mean = rtts.reduce((a,b)=>a+b,0) / rtts.length;
+    S.ntpJitter = Math.sqrt(rtts.map(r=>(r-mean)**2).reduce((a,b)=>a+b,0)/rtts.length);
+  }
+
+  updateNTPUI();
+}
+
+function ntpStart() {
+  ntpProbe();
+  clearInterval(S.ntpTimer);
+  S.ntpTimer = setInterval(ntpProbe, NTP_INTERVAL);
+}
+
+function updateNTPUI() {
+  const off = S.ntpOffset.toFixed(1);
+  const rtt = S.ntpRtt;
+  const samples = S.ntpHistory.length;
+
+  // Home screen
+  const hs = $('ntp-status-home');
+  if (hs) hs.textContent = `NTP ✓ ${off}ms`;
+
+  // Host screen
+  $('ntp-offset-val').textContent = (S.ntpOffset>=0?'+':'')+off+'ms';
+  $('ntp-rtt-val').textContent    = rtt+'ms';
+  $('ntp-samples-val').textContent = samples;
+
+  if (samples >= 3) {
+    $('ntp-lock-badge').className = 'badge badge-ok';
+    $('ntp-lock-badge').innerHTML = '<span class="dot"></span>Locked';
+    $('host-ntp').className = 'badge badge-ok';
+    $('host-ntp').innerHTML = '<span class="dot"></span>NTP';
+  }
+
+  // Room screen
+  $('r-ntp-offset').textContent = (S.ntpOffset>=0?'+':'')+off+'ms';
+  $('r-ntp-rtt').textContent    = rtt+'ms';
+  $('r-ntp-jitter').textContent = '±'+S.ntpJitter.toFixed(1)+'ms';
+
+  if (samples >= 3) {
+    $('room-ntp-badge').className = 'badge badge-ok';
+    $('room-ntp-badge').innerHTML = '<span class="dot"></span>Locked';
+  }
+
+  $('player-rtt').textContent = rtt+'ms';
+}
+
+
+/* Close any existing PC/DC before creating a new one */
+function teardownPC(peerSid) {
+  if (peerSid) {
+    // Close just one peer
+    const peer = S.peers.get(peerSid);
+    if (peer) {
+      try { peer.dc && peer.dc.close(); } catch(e) {}
+      try { peer.pc && peer.pc.close(); } catch(e) {}
+      S.peers.delete(peerSid);
+    }
+    // If this was the last/only peer, clear legacy refs too
+    if (S.peerSid === peerSid) { S.pc = null; S.dc = null; S.remoteDescSet = false; S.pendingICE = []; }
+  } else {
+    // Close ALL
+    for (const [, peer] of S.peers) {
+      try { peer.dc && peer.dc.close(); } catch(e) {}
+      try { peer.pc && peer.pc.close(); } catch(e) {}
+    }
+    S.peers.clear();
+    S.pc = null; S.dc = null; S.remoteDescSet = false; S.pendingICE = [];
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WebRTC PEER CONNECTION
+═══════════════════════════════════════════════════════════ */
+async function initPC(targetSid) {
+  // targetSid: specific follower to connect to (master) or undefined (follower accepts any)
+  const sid = targetSid || S.peerSid;
+  if (!sid) { console.warn('[initPC] no target sid'); return; }
+
+  // Close stale connection to this peer if any
+  teardownPC(sid);
+
+  const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+  const peer = { pc, dc: null, pendingICE: [], remoteDescSet: false };
+  S.peers.set(sid, peer);
+
+  // Keep legacy refs for follower side (single connection)
+  if (S.role !== 'master') { S.pc = pc; S.remoteDescSet = false; S.pendingICE = peer.pendingICE; }
+
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) S.socket.emit('rtc:ice', { to: sid, candidate });
+  };
+
+  pc.onconnectionstatechange = () => {
+    const st = pc.connectionState;
+    console.log('[WebRTC] state to', sid.slice(0,8), ':', st);
+    const connectedCount = [...S.peers.values()].filter(p => p.pc.connectionState === 'connected').length;
+    if (connectedCount > 0) {
+      updateConnBadge('connected');
+      $('p2p-label').textContent = S.role === 'master' ? connectedCount + ' P2P' : 'P2P ✓';
+      $('r-transport').textContent = 'P2P';
+      $('av-ring-you').classList.add('on');
+      $('av-ring-peer').classList.add('on');
+    }
+    if (st === 'connected' && S.role === 'master') {
+      const total = S.listenerCount;
+      toast('Listener connected (' + connectedCount + '/' + total + ') — you can now share a file');
+    }
+  };
+
+  if (S.role === 'master') {
+    const dc = pc.createDataChannel('mudi', { ordered: true });
+    peer.dc = dc;
+    setupDC(dc, sid);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    S.socket.emit('rtc:offer', { to: sid, sdp: pc.localDescription });
+  } else {
+    pc.ondatachannel = ({ channel }) => { peer.dc = channel; S.dc = channel; setupDC(channel, sid); };
+  }
+}
+
+async function handleOffer({ from, sdp }) {
+  // from = master's socket ID; peer entry was already created by initPC(from)
+  const peer = S.peers.get(from);
+  if (!peer) {
+    console.error('[handleOffer] no peer entry for', from, '— peers:', [...S.peers.keys()]);
+    return;
+  }
+  try {
+    await peer.pc.setRemoteDescription(sdp);
+    peer.remoteDescSet = true;
+    // Flush any ICE candidates that arrived before the remote description
+    for (const c of peer.pendingICE) {
+      try { await peer.pc.addIceCandidate(c); } catch(e) { console.warn('[ICE flush]', e); }
+    }
+    peer.pendingICE = [];
+    const answer = await peer.pc.createAnswer();
+    await peer.pc.setLocalDescription(answer);
+    S.socket.emit('rtc:answer', { to: from, sdp: peer.pc.localDescription });
+    console.log('[WebRTC] answer sent to', from.slice(0,8));
+  } catch(e) {
+    console.error('[handleOffer] error:', e);
+  }
+}
+
+async function setRemoteDesc(sdp, peerSid) {
+  const peer = S.peers.get(peerSid);
+  if (!peer) return;
+  await peer.pc.setRemoteDescription(sdp);
+  peer.remoteDescSet = true;
+  for (const c of peer.pendingICE) { try { await peer.pc.addIceCandidate(c); } catch(e) {} }
+  peer.pendingICE = [];
+}
+
+async function addICE(candidate, peerSid) {
+  const peer = S.peers.get(peerSid);
+  if (!peer) return;
+  if (peer.remoteDescSet) {
+    try { await peer.pc.addIceCandidate(candidate); } catch(e) {}
+  } else {
+    peer.pendingICE.push(candidate);
+  }
+}
+
+function updateConnBadge(state) {
+  const b = $('conn-badge');
+  const ok = state === 'connected';
+  b.className = 'badge ' + (ok ? 'badge-ok' : state === 'failed' ? 'badge-red' : 'badge-wait');
+  b.innerHTML = `<span class="dot ${ok?'':'dot-blink'}"></span>${ok ? 'P2P' : state}`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DATA CHANNEL — file transfer
+═══════════════════════════════════════════════════════════ */
+function setupDC(dc) {
+  // CRITICAL: default binaryType is 'blob' in many browsers — ArrayBuffer required
+  dc.binaryType = 'arraybuffer';
+  let chunks=[], rxBytes=0, meta=null;
+
+  dc.onopen = () => {
+    console.log('[DC] open');
+    $('r-transport').textContent = 'P2P';
+    // If host already picked a file before P2P was ready, send it now
+    if (S.role === 'master' && S.pendingFile) {
+      const f = S.pendingFile;
+      S.pendingFile = null;
+      $('prog-send-label').textContent = 'Sending...';
+      sendFile(f).catch(err => {
+        toast('Transfer error: ' + err.message);
+        console.error('[sendFile]', err);
+      });
+    }
+  };
+
+  dc.onmessage = async ({ data }) => {
+    if (typeof data === 'string') {
+      // String frame = file metadata
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed && parsed.type === 'meta') {
+          meta   = parsed;
+          chunks = []; rxBytes = 0;
+          $('wait-file').style.display     = 'none';
+          $('recv-block').style.display    = 'block';
+          $('recv-fname').textContent      = meta.name;
+          $('recv-fsize').textContent      = (meta.size / 1024 / 1024).toFixed(2) + ' MB';
+          $('prog-recv-label').textContent = 'Receiving...';
+          $('prog-recv').style.width       = '0%';
+          $('prog-recv-label').style.color = '';   // reset any previous error colour
+          console.log('[DC] meta received:', meta.name, meta.size, 'bytes');
+        }
+      } catch(e) {
+        console.error('[DC] bad meta frame:', e, data);
+      }
+      return;
+    }
+
+    // Binary frame = file chunk
+    if (!meta) {
+      console.warn('[DC] chunk received before meta — ignoring');
+      return;
+    }
+    if (!(data instanceof ArrayBuffer)) {
+      console.warn('[DC] unexpected chunk type:', typeof data, data);
+      return;
+    }
+
+    chunks.push(data);
+    rxBytes += data.byteLength;
+
+    const pct = Math.min(1, rxBytes / meta.size);
+    $('prog-recv').style.width       = (pct * 100).toFixed(1) + '%';
+    $('prog-recv-label').textContent =
+      (rxBytes / 1024 / 1024).toFixed(2) + ' / ' + (meta.size / 1024 / 1024).toFixed(2) + ' MB';
+
+    if (rxBytes >= meta.size) {
+      $('prog-recv-label').textContent = 'Verifying SHA-256...';
+
+      // Assemble chunks into one contiguous buffer
+      const assembled = new Uint8Array(meta.size);
+      let off = 0;
+      for (const chunk of chunks) {
+        const view = new Uint8Array(chunk);
+        assembled.set(view, off);
+        off += view.byteLength;
+      }
+
+      S.fileBuf  = assembled.buffer;
+      S.fileName = meta.name;
+      S.fileSize = meta.size;
+
+      try {
+        const hash = await sha256hex(S.fileBuf.slice(0));
+        if (hash === meta.hash) {
+          S.fileHash = hash;
+          $('prog-recv-label').textContent    = '✓ Verified — SHA-256 match';
+          $('hash-badge-recv').style.display  = 'inline-flex';
+          $('wait-sync-msg').style.display    = 'block';
+          S.socket.emit('file:ready', { hash });
+          toast('File received & verified');
+          console.log('[DC] transfer complete, hash ok');
+        } else {
+          $('prog-recv-label').textContent = '✗ Hash mismatch — retransfer needed';
+          $('prog-recv-label').style.color = 'var(--red)';
+          toast('⚠ File integrity check failed');
+          console.error('[DC] hash mismatch. Expected:', meta.hash, 'Got:', hash);
+          // Reset so host can retry
+          meta = null; chunks = []; rxBytes = 0;
+        }
+      } catch(e) {
+        $('prog-recv-label').textContent = '✗ Verification error: ' + e.message;
+        $('prog-recv-label').style.color = 'var(--red)';
+        console.error('[DC] sha256 error:', e);
+      }
+    }
+  };
+}
+
+async function sendFile(file) {
+  $('prog-send-label').textContent = 'Computing SHA-256...';
+  const buf  = await file.arrayBuffer();
+  const hash = await sha256hex(buf.slice(0));
+
+  S.fileBuf  = buf; S.fileHash = hash;
+  S.fileName = file.name; S.fileSize = buf.byteLength;
+
+  // Announce via socket (followers see filename immediately)
+  S.socket.emit('file:meta', { name: file.name, size: buf.byteLength, hash });
+
+  // Collect all open DataChannels from S.peers (master uses peers map, not legacy S.dc)
+  const openDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
+  if (openDCs.length === 0) {
+    // No open DCs yet — queue and retry when one opens
+    S.pendingFile = file;
+    $('prog-send-label').textContent = 'Waiting for P2P connection...';
+    toast('File ready — waiting for P2P to establish');
+    return;
+  }
+  console.log('[DC] sending to', openDCs.length, 'listener(s):', file.name, buf.byteLength, 'bytes');
+
+  // Send meta frame to each DC
+  const metaStr = JSON.stringify({ type: 'meta', name: file.name, size: buf.byteLength, hash });
+  for (const dc of openDCs) dc.send(metaStr);
+  await new Promise(r => setTimeout(r, 0));
+
+  // Stream chunks to all DCs with flow control
+  let offset = 0;
+  const BUFFER_HIGH = 256 * 1024;
+  const BUFFER_LOW  = 64  * 1024;
+  for (const dc of openDCs) dc.bufferedAmountLowThreshold = BUFFER_LOW;
+
+  function pump() {
+    const currentDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
+    while (offset < buf.byteLength) {
+      const maxBuf = Math.max(...currentDCs.map(dc => dc.bufferedAmount), 0);
+      if (maxBuf > BUFFER_HIGH) {
+        // Pause until the slowest DC drains
+        const slowDC = currentDCs.find(dc => dc.bufferedAmount > BUFFER_HIGH);
+        if (slowDC) { slowDC.onbufferedamountlow = () => { slowDC.onbufferedamountlow = null; pump(); }; }
+        return;
+      }
+      const end   = Math.min(offset + CHUNK_SIZE, buf.byteLength);
+      const chunk = new Uint8Array(buf, offset, end - offset);
+      for (const dc of currentDCs) dc.send(chunk);
+      offset = end;
+      const pct = offset / buf.byteLength;
+      $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
+      $('prog-send-label').textContent =
+        (offset / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB';
+    }
+    $('prog-send-label').textContent = '✓ Sent to all — waiting for listeners to verify';
+    $('hash-badge-send').style.display = 'inline-flex';
+  }
+  pump();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AUDIO ENGINE
+═══════════════════════════════════════════════════════════ */
+async function ensureCtx() {
+  if (!S.audioCtx) S.audioCtx = new AudioContext();
+  if (S.audioCtx.state === 'suspended') await S.audioCtx.resume();
+}
+
+async function decodeAudio() {
+  await ensureCtx();
+  if (!S.audioBuf) {
+    S.audioBuf = await S.audioCtx.decodeAudioData(S.fileBuf.slice(0));
+    S.duration  = S.audioBuf.duration;
+    $('duration').textContent = fmtTime(S.duration);
+    const seekBar = $('seek-bar');
+    seekBar.max = S.duration.toFixed(2);
+  }
+}
+
+function stopAudio() {
+  if (S.audioSrc) {
+    S._manualStop = true;          // tell onended this was deliberate
+    try { S.audioSrc.stop(); } catch(e) {}
+    S.audioSrc.disconnect();
+    S.audioSrc = null;
+    S._manualStop = false;
+  }
+  clearInterval(S.driftTimer);
+  clearInterval(S.seekTimer);
+  S.playing = false;
+}
+
+async function doSyncPlay(globalPlayAt, position = 0) {
+  await decodeAudio();
+  stopAudio();
+
+  S.audioSrc = S.audioCtx.createBufferSource();
+  S.audioSrc.buffer = S.audioBuf;
+  S.audioSrc.connect(S.audioCtx.destination);
+  S.audioSrc.onended = () => {
+    if (S._manualStop) return;   // deliberate stop — don't change UI state
+    // Natural end of track
+    S.playing = false;
+    clearInterval(S.seekTimer);
+    clearInterval(S.driftTimer);
+    const sb = $('seek-bar');
+    if (sb) { sb.value = S.duration; sb.style.setProperty('--p','100%'); }
+    $('cur-time').textContent = fmtTime(S.duration);
+    updatePlayerControls();
+  };
+
+  const delayMs = globalPlayAt - gn();            // time until scheduled start
+  const ctxDelay = Math.max(0.05, delayMs / 1000);
+  const startAt  = S.audioCtx.currentTime + ctxDelay;
+
+  S.audioSrc.start(startAt, Math.max(0, position));
+  S.audioStartCtx  = startAt;
+  S.globalPlayAt   = globalPlayAt;
+  S.playStartPos   = Math.max(0, position);
+  S.playing        = true;
+
+  console.log(`[audio] start delay=${delayMs.toFixed(0)}ms pos=${position.toFixed(2)}s`);
+
+  $('track-name').textContent = S.fileName?.replace(/\.(mp3|wav|flac|aac|ogg|m4a|opus)$/i,'') || 'Now Playing';
+  updatePlayerControls();
+  goScreen('player');
+
+  S.seekTimer  = setInterval(tickSeek, SEEK_INTERVAL);
+  S.driftTimer = setInterval(tickDrift, DRIFT_INTERVAL);
+}
+
+function tickSeek() {
+  if (!S.playing || !S.audioCtx || S.seekDragging) return;
+  // elapsed can be negative before scheduled start — clamp to 0
+  const elapsed = S.audioCtx.currentTime - S.audioStartCtx;
+  const pos     = Math.min(S.duration, S.playStartPos + Math.max(0, elapsed));
+  const seekBar = $('seek-bar');
+  if (!seekBar) return;
+  seekBar.value = pos;
+  // Ensure max is always correct (guards against first-play race)
+  if (parseFloat(seekBar.max) !== S.duration && S.duration > 0) {
+    seekBar.max = S.duration.toFixed(3);
+    $('duration').textContent = fmtTime(S.duration);
+  }
+  seekBar.style.setProperty('--p', S.duration > 0 ? (pos / S.duration * 100).toFixed(2) + '%' : '0%');
+  $('cur-time').textContent = fmtTime(pos);
+}
+
+function tickDrift() {
+  if (!S.playing || !S.audioCtx) return;
+
+  // Expected position from global clock
+  const expectedPos = S.playStartPos + (gn() - S.globalPlayAt) / 1000;
+  // Actual position from AudioContext
+  const actualPos   = S.playStartPos + (S.audioCtx.currentTime - S.audioStartCtx);
+  const driftMs     = (actualPos - expectedPos) * 1000;
+  const absDrift    = Math.abs(driftMs);
+
+  updateDriftUI(driftMs);
+
+  if (!S.audioSrc) return;
+
+  if (absDrift > MACRO_THRESH) {
+    // Hard seek: mute for ~1 frame, jump to correct position
+    console.warn(`[drift] macro-sync drift=${driftMs.toFixed(0)}ms`);
+    S.corrCount++;
+    $('corr-count').textContent = S.corrCount;
+    doSyncPlay(gn() + 400, Math.max(0, expectedPos));
+  } else if (absDrift > MICRO_THRESH) {
+    // Time-stretch: gentle rate adjustment
+    const correction = 1.0 - Math.sign(driftMs) * 0.004;
+    S.audioSrc.playbackRate.value = Math.max(0.975, Math.min(1.025, correction));
+    $('rate-val').textContent = S.audioSrc.playbackRate.value.toFixed(3)+'×';
+    $('sync-mode-label').textContent = `Micro-sync (${absDrift.toFixed(0)}ms)`;
+  } else {
+    S.audioSrc.playbackRate.value = 1.0;
+    $('rate-val').textContent = '1.000×';
+    $('sync-mode-label').textContent = 'In sync';
+  }
+}
+
+function updateDriftUI(driftMs) {
+  const abs = Math.abs(driftMs);
+  const d   = $('drift-val');
+  d.textContent = (driftMs>=0?'+':'')+driftMs.toFixed(1)+'ms';
+  d.style.color = abs > 50 ? 'var(--amber)' : 'var(--cyan)';
+  const badge = $('player-badge');
+  badge.innerHTML = `<span class="dot"></span>Δ ${abs.toFixed(1)}ms`;
+  const ring = $('sync-ring');
+  if (ring) ring.style.opacity = abs < 25 ? '1' : '0.3';
+}
+
+function updatePlayerControls() {
+  const icon = S.playing ? '⏸' : '▶';
+  const ppBtn = $('btn-play-pause');
+  const fIcon = $('follower-play-icon');
+  const wf    = $('player-wf');
+  const txt   = $('player-status-text');
+  if (ppBtn) ppBtn.textContent = icon;
+  if (fIcon) fIcon.textContent = icon;
+  if (wf)    wf.classList.toggle('paused', !S.playing);
+  if (txt)   txt.textContent = S.playing ? 'PLAYING' : 'PAUSED';
+}
+
+
+/* Reset the file-upload section back to its initial pick-a-file state */
+function resetFileUI() {
+  const chip    = $('file-chip');
+  const block   = $('transfer-block');
+  const syncBtn = $('sync-play-btn');
+  const badge   = $('hash-badge-send');
+  const prog    = $('prog-send');
+  const label   = $('prog-send-label');
+  if (chip)    { chip.style.display    = '';      }   // show label
+  if (block)   { block.style.display   = 'none';  }   // hide progress
+  if (syncBtn) { syncBtn.style.display = 'none';  }   // hide sync play
+  if (badge)   { badge.style.display   = 'none';  }
+  if (prog)    { prog.style.width      = '0%';    }
+  if (label)   { label.textContent     = '';       label.style.color = ''; }
+  S.pendingFile = null;
+}
+
+function updateListenerUI() {
+  const count = S.listenerCount || 0;
+  const max   = S.maxListeners  || 10;
+  const lc    = $('listener-count');
+  if (lc) lc.textContent = count + (count === 1 ? ' listener' : ' listeners');
+  const pLabel = $('p2p-label');
+  if (pLabel && count > 0) pLabel.textContent = count + ' P2P';
+  // Show/hide peer-wait-card based on whether anyone is connected
+  const pwc = $('peer-wait-card');
+  if (pwc && S.role === 'master') pwc.style.display = count === 0 ? 'flex' : 'none';
+  // Update room code top with count
+  const rct = $('room-code-top');
+  if (rct && S.code) rct.textContent = S.code + '  ' + count + '/' + max;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ROLE-BASED UI
+═══════════════════════════════════════════════════════════ */
+function applyRole() {
+  const isMaster = S.role === 'master';
+
+  // Role-specific elements in room screen (file sections)
+  $('file-section-master').style.display  = isMaster ? 'flex' : 'none';
+  $('file-section-follower').style.display = isMaster ? 'none' : 'flex';
+
+  // Player controls — driven by explicit IDs, not class-based show/hide
+  $('master-controls').style.display   = isMaster ? 'flex' : 'none';
+  $('follower-controls').style.display = isMaster ? 'none' : 'flex';
+  $('share-file-row').style.display    = isMaster ? 'block' : 'none';
+
+  // Seek bar: both see it, only master can drag
+  const seekBar = $('seek-bar');
+  if (seekBar) {
+    seekBar.style.pointerEvents = isMaster ? '' : 'none';
+    seekBar.style.cursor        = isMaster ? '' : 'default';
+    seekBar.disabled = false;  // never disabled — keeps full opacity for follower
+  }
+
+  // Avatar / role labels
+  $('role-label-you').textContent  = isMaster ? 'HOST' : 'LISTENER';
+  $('role-label-peer').textContent = isMaster ? 'LISTENER' : 'HOST';
+  $('av-you').textContent  = 'You';
+  $('av-peer').textContent = isMaster ? 'A' : 'M';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MASTER CONTROLS
+═══════════════════════════════════════════════════════════ */
+function onFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  // Show file info immediately — regardless of P2P state
+  $('file-chip').style.display      = 'none';
+  $('transfer-block').style.display = 'block';
+  $('send-fname').textContent       = file.name;
+  $('send-fsize').textContent       = (file.size/1024/1024).toFixed(2)+' MB';
+  $('prog-send-label').textContent  = 'Reading file...';
+  e.target.value = '';  // allow re-selecting same file
+
+  // Check if any DataChannels are open (master uses S.peers map, not legacy S.dc)
+  const openDCCount = [...S.peers.values()].filter(p => p.dc && p.dc.readyState === 'open').length;
+
+  if (openDCCount > 0) {
+    sendFile(file).catch(err => {
+      toast('Transfer error: ' + err.message);
+      console.error('[sendFile]', err);
+    });
+  } else {
+    // Queue: will send as soon as DataChannel opens
+    S.pendingFile = file;
+    $('prog-send-label').textContent = 'Waiting for listener to connect...';
+    toast('File selected — waiting for listener to join');
+  }
+}
+
+function onSyncPlay() {
+  S.socket.emit('sync:play', { position: 0 });
+}
+
+async function onPlayPause() {
+  if (S.role !== 'master') return;
+  if (!S.playing) {
+    // Resume from current seek position
+    const pos = parseFloat($('seek-bar').value) || 0;
+    S.socket.emit('sync:play', { position: pos });
+  } else {
+    stopAudio();
+    S.socket.emit('sync:pause');
+    updatePlayerControls();
+  }
+}
+
+function onSeekDrag(el) {
+  S.seekDragging = true;
+  el.style.setProperty('--p', (el.value / S.duration * 100) + '%');
+  $('cur-time').textContent = fmtTime(parseFloat(el.value));
+}
+
+function onSeekCommit(el) {
+  S.seekDragging = false;
+  if (S.role !== 'master') return;
+  const pos = parseFloat(el.value);
+  S.socket.emit('sync:seek', { position: pos });
+}
+
+function showPlayerStoppedBanner(show) {
+  let banner = $('player-stopped-banner');
+  if (!banner) {
+    // Create it once and insert it just above the sync metrics card
+    banner = document.createElement('div');
+    banner.id = 'player-stopped-banner';
+    banner.style.cssText = [
+      'flex-shrink:0',
+      'background:rgba(239,159,39,.08)',
+      'border:1px solid rgba(239,159,39,.25)',
+      'border-radius:12px',
+      'padding:clamp(10px,3vw,14px) 16px',
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'font-size:clamp(10px,2.8vw,12px)',
+      'color:var(--amber)',
+    ].join(';');
+    banner.innerHTML = [
+      '<span style="font-size:18px;">⏹</span>',
+      '<div>',
+      '<div style="font-weight:500;">Playback stopped by host</div>',
+      '<div style="font-size:clamp(9px,2.4vw,10px);color:var(--muted);margin-top:2px;" class="dots-anim">Waiting for host to share next track</div>',
+      '</div>',
+    ].join('');
+    // Insert before the sync metrics card (last child of s-player)
+    const player = $('s-player');
+    if (player) player.appendChild(banner);
+  }
+  banner.style.display = show ? 'flex' : 'none';
+}
+
+function onReplay() {
+  // Restart from position 0 for all listeners
+  if (S.role !== 'master') return;
+  S.socket.emit('sync:play', { position: 0 });
+}
+
+function onStop() {
+  // Stop playback on all listeners and return to room screen
+  if (S.role !== 'master') return;
+  stopAudio();
+  updatePlayerControls();
+  S.socket.emit('sync:stop');
+  // Reset audioBuf so next play resets seek to 0
+  S.audioBuf = null;
+  S.duration  = 0;
+  const sb = $('seek-bar'); if (sb) { sb.value = 0; sb.style.setProperty('--p','0%'); }
+  $('cur-time').textContent  = '0:00';
+  $('duration').textContent  = '0:00';
+}
+
+function onShareAnotherFile() {
+  // Master wants to share a different file — stop current, go back to room
+  if (S.role !== 'master') return;
+  onStop();  // stops audio + broadcasts sync:stop
+  // Reset file-related state
+  S.fileBuf   = null;
+  S.fileHash  = null;
+  S.fileName  = null;
+  S.fileSize  = 0;
+  S.audioBuf  = null;
+  S.readyCount = 0;
+  resetFileUI();
+  goScreen('room');
+}
+
+function skipBack() {
+  if (S.role !== 'master') return;
+  const pos = Math.max(0, parseFloat($('seek-bar').value) - 10);
+  S.socket.emit('sync:seek', { position: pos });
+}
+function skipFwd() {
+  if (S.role !== 'master') return;
+  const pos = Math.min(S.duration, parseFloat($('seek-bar').value) + 10);
+  S.socket.emit('sync:seek', { position: pos });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   QR CODE
+═══════════════════════════════════════════════════════════ */
+function genQR(code) {
+  const url = `${location.origin}?join=${code}`;
+  const wrap = $('qr-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';   // clear any previous QR
+  try {
+    if (typeof QRCode === 'undefined') throw new Error('QRCode not loaded');
+    // qrcodejs API: new QRCode(element, options)
+    new QRCode(wrap, {
+      text:           url,
+      width:          160,
+      height:         160,
+      colorDark:      '#0E0E22',
+      colorLight:     '#ffffff',
+      correctLevel:   QRCode.CorrectLevel.M
+    });
+  } catch(e) {
+    // Fallback: show the join URL as text so the host can share it manually
+    wrap.innerHTML = `<div style="font-size:10px;color:var(--muted);word-break:break-all;text-align:center;padding:8px;">${url}</div>`;
+    console.warn('[QR]', e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   COUNTDOWN TIMER
+═══════════════════════════════════════════════════════════ */
+let cdSecs=600, cdTimer;
+function startCountdown() {
+  clearInterval(cdTimer);
+  cdSecs = 600;
+  cdTimer = setInterval(() => {
+    cdSecs--;
+    const m=Math.floor(cdSecs/60), s=cdSecs%60;
+    $('expire-countdown').textContent = `${m}:${s.toString().padStart(2,'0')}`;
+    if (cdSecs<=0) clearInterval(cdTimer);
+  },1000);
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   SESSION PERSISTENCE — localStorage
+═══════════════════════════════════════════════════════════ */
+const SESSION_KEY = 'mudi_session';
+
+function saveSession(data) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      ...data,
+      savedAt: Date.now(),
+    }));
+  } catch(e) {}
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    // Expire sessions older than 10 minutes (matches server room TTL)
+    if (Date.now() - s.savedAt > 10 * 60 * 1000) { clearSession(); return null; }
+    return s;
+  } catch(e) { return null; }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
+
+function showRejoinBanner(session) {
+  const banner = $('rejoin-banner');
+  if (!banner) return;
+  const nameEl = $('rejoin-room-name');
+  const roleEl = $('rejoin-role');
+  if (nameEl) nameEl.textContent = session.roomName || session.code;
+  if (roleEl) roleEl.textContent = session.role === 'master' ? 'Host' : 'Listener';
+  banner.style.display = 'flex';
+}
+
+function hideRejoinBanner() {
+  const b = $('rejoin-banner');
+  if (b) b.style.display = 'none';
+}
+
+async function doRejoin() {
+  const session = loadSession();
+  if (!session) { hideRejoinBanner(); return; }
+  hideRejoinBanner();
+
+  console.log('[rejoin] attempting to rejoin', session.code, 'as', session.role);
+
+  // Restore in-memory state now so applyRole() works
+  S.code        = session.code;
+  S.roomName    = session.roomName;
+  S.role        = session.role;
+  S.hasPassword = session.hasPassword || false;
+  applyRole();
+
+  // Navigate to the right waiting screen first, then tell the server
+  if (session.role === 'master') {
+    $('room-name-display').textContent = session.roomName || session.code;
+    $('room-code-display').textContent = session.code;
+    $('room-code-top').textContent     = session.code;
+    $('player-room-name').textContent  = session.roomName || session.code;
+    goScreen('host');
+    setTimeout(() => genQR(session.code), 80);
+  } else {
+    $('room-code-top').textContent = session.code;
+    goScreen('room');
+  }
+
+  toast('Rejoining ' + (session.roomName || session.code) + '...');
+  // room:rejoined and room:rejoin-err are both handled by initSocket() listeners
+  S.socket.emit('room:rejoin', { code: session.code, role: session.role });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SOCKET.IO — EVENT WIRING
+═══════════════════════════════════════════════════════════ */
+function initSocket() {
+  S.socket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000,
+      timeout: 10000,
+    });
+
+  /* NTP */
+  S.socket.on('ntp:res', ntpHandle);
+  ntpStart();
+
+  /* Room */
+  S.socket.on('room:created', ({ code, name, hasPassword, maxListeners }) => {
+    S.role = 'master'; S.code = code; S.roomName = name; S.hasPassword = hasPassword;
+    S.maxListeners = maxListeners || 10; S.listenerCount = 0;
+    applyRole();
+    $('room-name-display').textContent = name;
+    $('room-code-display').textContent = code;
+    $('player-room-name').textContent = name;
+    if (hasPassword) { $('lock-badge').style.display='inline-flex'; } else { $('lock-badge').style.display='none'; }
+    $('room-code-top').textContent     = code;
+    startCountdown();
+    goScreen('host');              // navigate FIRST — never let QR block this
+    resetFileUI();
+    saveSession({ code, roomName: name, role: 'master', hasPassword });
+    toast('Room created — share the code or scan QR');
+    setTimeout(() => genQR(code), 50);  // generate QR after render tick
+  });
+
+  S.socket.on('room:err', ({ msg }) => {
+    $('join-err').textContent = msg;
+    toast('⚠ ' + msg);
+  });
+
+  S.socket.on('room:joined', ({ code, name, masterSid, listenerCount, maxListeners }) => {
+    S.code = code; S.roomName = name; S.peerSid = masterSid;
+    S.listenerCount = listenerCount || 1;
+    S.maxListeners  = maxListeners  || 10;
+    $('room-code-top').textContent = code;
+    applyRole();
+    goScreen('room');
+    updateListenerUI();
+    saveSession({ code, roomName: name, role: 'follower' });
+    toast('Joined "' + (name || code) + '" (' + listenerCount + '/' + maxListeners + ')');
+  });
+
+  S.socket.on('peer:joined', ({ peerSid, listenerCount }) => {
+    S.peerSid = peerSid;
+    S.listenerCount = listenerCount || 1;
+    $('peer-wait-card').style.display = 'none';
+    updateListenerUI();
+    if (curScreen === 'host') goScreen('room');
+    resetFileUI();
+    initPC(peerSid);
+    toast('Listener ' + listenerCount + ' connected — establishing P2P...');
+  });
+
+  S.socket.on('peer:left', ({ role, peerSid, permanent, listenerCount }) => {
+    if (role === 'follower' && peerSid) {
+      teardownPC(peerSid);
+      S.listenerCount = listenerCount ?? Math.max(0, S.listenerCount - 1);
+      updateListenerUI();
+      toast('Listener disconnected (' + S.listenerCount + ' remaining)');
+      if (S.listenerCount === 0) {
+        $('peer-wait-card').style.display = 'flex';
+        $('av-ring-peer').classList.remove('on');
+      }
+    } else {
+      // Master left
+      $('av-ring-peer').classList.remove('on');
+      if (permanent) {
+        clearSession();
+        toast('Host left — session ended');
+        stopAudio();
+        setTimeout(() => goScreen('home'), 2500);
+      } else {
+        toast('Host disconnected — waiting to reconnect...');
+        $('p2p-label').textContent = 'Waiting...';
+        $('conn-badge').className = 'badge badge-wait';
+        $('conn-badge').innerHTML = '<span class="dot dot-blink"></span>Reconnecting';
+      }
+    }
+  });
+
+  /* WebRTC relay */
+  S.socket.on('rtc:offer',  async ({ from, sdp }) => {
+    S.peerSid = from;
+    teardownPC(from);
+    await initPC(from);
+    await handleOffer({ from, sdp });
+  });
+  S.socket.on('rtc:answer', async ({ from, sdp }) => {
+    const peer = S.peers.get(from);
+    if (peer) await peer.pc.setRemoteDescription(sdp);
+  });
+  S.socket.on('rtc:ice', async ({ from, candidate }) => { await addICE(candidate, from); });
+
+  /* File */
+  S.socket.on('file:meta', ({ name, size }) => {
+    // Follower sees name/size via socket; bytes come via DataChannel
+    $('recv-fname').textContent = name;
+    $('recv-fsize').textContent = (size/1024/1024).toFixed(2)+' MB';
+  });
+
+  S.socket.on('file:ready', ({ readyCount, allReady, listenerCount }) => {
+    S.readyCount = readyCount;
+    // Use server-provided listenerCount as it's always accurate
+    const total = listenerCount !== undefined ? listenerCount : S.listenerCount;
+    if (total > 0) S.listenerCount = total;
+    const label = readyCount + '/' + total + ' listener' + (total !== 1 ? 's' : '') + ' verified';
+    $('prog-send-label').textContent = '✓ ' + label;
+    if (allReady) {
+      $('sync-play-btn').style.display = 'flex';
+      toast('All listeners ready — tap Sync Play');
+    } else {
+      toast(label);
+    }
+  });
+
+  /* Sync commands */
+  S.socket.on('sync:play', async ({ playAt, position }) => {
+    showPlayerStoppedBanner(false);
+    $('player-badge').className = 'badge badge-ok';
+    $('player-badge').innerHTML = '<span class="dot"></span>Synced';
+    $('sync-ring').style.opacity = '1';
+    const delay = playAt - Date.now();
+    toast(`Sync play in ${delay.toFixed(0)}ms`);
+    await doSyncPlay(playAt, position);
+  });
+
+  S.socket.on('sync:pause', () => {
+    stopAudio();
+    updatePlayerControls();
+  });
+
+  S.socket.on('sync:stop', () => {
+    stopAudio();
+    S.audioBuf   = null;
+    S.duration   = 0;
+    S.readyCount = 0;
+    updatePlayerControls();
+
+    // Reset seek bar to 0
+    const sb = $('seek-bar');
+    if (sb) { sb.value = 0; sb.style.setProperty('--p', '0%'); }
+    $('cur-time').textContent = '0:00';
+    $('duration').textContent = '0:00';
+
+    if (S.role === 'follower') {
+      // Stay on player screen — show a stopped state overlay
+      $('track-name').textContent      = S.fileName?.replace(/\.(mp3|wav|flac|aac|ogg|m4a|opus)$/i,'') || '—';
+      $('player-status-text').textContent = 'STOPPED';
+      $('sync-mode-label').textContent = 'Host stopped';
+      $('player-badge').className      = 'badge badge-wait';
+      $('player-badge').innerHTML      = '<span class="dot dot-blink"></span>Waiting';
+      $('sync-ring').style.opacity     = '0.3';
+      // Show a subtle banner inside the player so listener knows what happened
+      showPlayerStoppedBanner(true);
+      toast('Host stopped — waiting for next track');
+    } else {
+      // Master: reset track name too, ready for new file
+      S.fileBuf  = null;
+      S.fileHash = null;
+      S.fileName = null;
+      S.fileSize = 0;
+      $('track-name').textContent         = '—';
+      $('player-status-text').textContent = 'STOPPED';
+      $('sync-mode-label').textContent    = 'Stopped';
+      toast('Stopped — tap "Share Another File" to continue');
+    }
+  });
+
+  S.socket.on('sync:seek', async ({ position }) => {
+    if (S.playing) {
+      await doSyncPlay(gn() + 400, position);
+    } else if (S.audioBuf) {
+      const seekBar = $('seek-bar');
+      seekBar.value = position;
+      seekBar.style.setProperty('--p', (position/S.duration*100)+'%');
+      $('cur-time').textContent = fmtTime(position);
+    }
+  });
+
+  /* Disconnect / reconnect */
+  S.socket.on('disconnect', (reason) => {
+    console.warn('[socket] disconnect reason:', reason);
+    if (reason === 'io server disconnect') {
+      toast('Session ended by server');
+      stopAudio();
+      setTimeout(() => location.reload(), 2500);
+    } else {
+      S.reconnecting = true;
+      // Delay showing the banner 3s — avoids flicker during file transfer
+      clearTimeout(S._reconnectBannerTimer);
+      S._reconnectBannerTimer = setTimeout(() => {
+        if (S.reconnecting) showReconnectBanner(true);
+      }, 3000);
+    }
+  });
+
+  S.socket.on('reconnecting', (attempt) => {
+    console.log('[socket] reconnecting attempt', attempt);
+    // Only show banner after 2nd attempt — first blip is often transient
+    if (attempt >= 2) showReconnectBanner(true);
+  });
+
+  S.socket.on('reconnect', () => {
+    S.reconnecting = false;
+    showReconnectBanner(false);
+    toast('Reconnected');
+    // Re-register with the room on socket reconnect
+    if (S.code && S.role) {
+      console.log('[socket] reconnected — rejoining room', S.code, 'as', S.role);
+      S.socket.emit('room:rejoin', { code: S.code, role: S.role });
+    }
+  });
+
+  S.socket.on('reconnect_failed', () => {
+    toast('Could not reconnect — please reload');
+    stopAudio();
+  });
+
+  // Dedicated error event for rejoin failures — does NOT share room:err handler
+  S.socket.on('room:rejoin-err', ({ msg }) => {
+    console.warn('[rejoin] failed:', msg);
+    clearSession();
+    showReconnectBanner(false);
+    toast('Could not rejoin: ' + msg);
+    // Return to home after a moment so user can start fresh
+    setTimeout(() => goScreen('home'), 1500);
+  });
+
+  S.socket.on('room:rejoined', ({ code, name, role, peerSid, masterSid, listenerCount, followerSids, hasFollower }) => {
+    S.listenerCount = listenerCount || (followerSids ? followerSids.length : 0);
+    console.log('[room] rejoined successfully', code, role, 'hasFollower:', hasFollower, 'peerSid:', peerSid);
+    S.code = code; S.roomName = name; S.role = role;
+    applyRole();
+    resetFileUI();  // always reset file UI on any rejoin
+    saveSession({ code, roomName: name, role, hasPassword: S.hasPassword });
+
+    if (role === 'master') {
+      $('room-name-display').textContent = name;
+      $('room-code-display').textContent = code;
+      $('room-code-top').textContent     = code;
+      $('player-room-name').textContent  = name;
+      setTimeout(() => genQR(code), 80);
+
+      if (followerSids && followerSids.length > 0) {
+        // Re-establish WebRTC to each existing follower
+        followerSids.forEach((sid, i) => {
+          S.peerSid = sid;
+          $('peer-wait-card').style.display = 'none';
+          setTimeout(() => initPC(sid), 300 + i * 100);
+        });
+        goScreen('room');
+        toast('Rejoined — re-establishing to ' + followerSids.length + ' listener(s)...');
+      } else {
+        $('peer-wait-card').style.display = 'flex';
+        goScreen('host');
+        toast('Room restored — waiting for listeners');
+      }
+      updateListenerUI();
+    } else {
+      // Follower rejoined
+      $('room-code-top').textContent = code;
+      goScreen('room');
+      if (peerSid) {
+        S.peerSid = peerSid;
+        toast('Rejoined — waiting for host to reconnect...');
+      } else {
+        toast('Rejoined — host is not here yet');
+      }
+    }
+  });
+
+  S.socket.on('room:state', ({ listenerCount, allReady, readyCount }) => {
+    S.listenerCount = listenerCount;
+    updateListenerUI();
+    if (allReady && S.role === 'master') {
+      $('sync-play-btn').style.display = 'flex';
+    }
+  });
+
+  S.socket.on('peer:rejoined', ({ role, peerSid, listenerCount }) => {
+    console.log('[peer:rejoined] role:', role, 'peerSid:', peerSid);
+    if (listenerCount !== undefined) { S.listenerCount = listenerCount; updateListenerUI(); }
+    toast((role === 'master' ? 'Host' : 'Listener') + ' reconnected');
+    if (peerSid) {
+      S.peerSid = peerSid;
+      if (S.role === 'master') {
+        setTimeout(() => initPC(peerSid), 200);
+      } else {
+        teardownPC(peerSid);
+        $('p2p-label').textContent = 'Connecting...';
+        updateConnBadge('connecting');
+      }
+    }
+    $('av-ring-peer').classList.add('on');
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.master-only, .follower-only').forEach(el => el.style.display = 'none');
+
+  initSocket();
+  wireNameCheck();
+  handleJoinURL();
+
+  // Check for a saved session and show rejoin banner if found
+  const savedSession = loadSession();
+  if (savedSession && !new URLSearchParams(location.search).get('join')) {
+    showRejoinBanner(savedSession);
+  }
+
+  // Clock display
+  setInterval(() => {
+    const n = new Date();
+    const t = `${n.getHours().toString().padStart(2,'0')}:${n.getMinutes().toString().padStart(2,'0')}`;
+    $('clock-home').textContent = t;
+  }, 1000);
+
+  // Check ?join=CODE in URL (from QR scan)
+  const params   = new URLSearchParams(location.search);
+  const joinCode = params.get('join');
+  if (joinCode) {
+    $('code-input').value = joinCode.toUpperCase();
+    goScreen('join');
+  }
+
+  // Back buttons
+  $('back-create').onclick  = () => { goScreen('home'); };
+  $('back-host').onclick = () => {
+    if (S.code) {
+      if (!confirm('Leave your room? Listeners will lose connection.')) return;
+      if (S.socket) S.socket.emit('sync:stop');
+      clearSession();
+      S.socket.emit('room:leave');
+    }
+    clearInterval(cdTimer);
+    stopAudio();
+    goScreen('home');
+  };
+  $('back-join').onclick   = () => { $('join-err').textContent=''; goScreen('home'); };
+  $('back-room').onclick = () => {
+    if (!confirm('Leave this room? Your session will be lost.')) return;
+    // Stop audio on ALL clients before leaving
+    if (S.role === 'master' && S.socket) S.socket.emit('sync:stop');
+    stopAudio();
+    clearSession();
+    setTimeout(() => { S.socket.disconnect(); setTimeout(() => location.reload(), 100); }, 200);
+  };
+  $('back-player').onclick = () => goScreen('room');
+
+  // Home
+  $('btn-host').onclick   = () => goScreen('create');
+  $('btn-join').onclick   = () => goScreen('join');
+  $('btn-rejoin').onclick  = () => doRejoin();
+  $('btn-dismiss-rejoin').onclick = () => { clearSession(); hideRejoinBanner(); };
+
+  // Join
+  $('btn-connect').onclick = () => {
+    const raw = $('code-input').value.trim();
+    if (!raw) { $('join-err').textContent = 'Enter a room code or room name'; return; }
+    // Send as-is — server resolves both codes (ABC-123) and room names
+    S.role = 'follower';
+    $('join-err').textContent = '';
+    const pw = $('pw-input') ? $('pw-input').value.trim() : '';
+    S.socket.emit('room:join', { code: raw.toUpperCase(), name: raw, password: pw });
+  };
+  $('code-input').addEventListener('keydown', e => { if(e.key==='Enter') $('btn-connect').click(); });
+  $('code-input').addEventListener('input', e => {
+    const val = e.target.value.trim().toUpperCase();
+    // Reset password hint when code changes
+    const badge = $('pw-required-badge');
+    const hint  = $('pw-hint');
+    const inp   = $('pw-input');
+    if (badge) badge.style.display = 'none';
+    if (hint)  { hint.textContent = 'Leave blank if the room has no password'; hint.style.color = 'var(--muted)'; }
+    if (inp)   { inp.placeholder = 'Leave blank if no password'; }
+    // Auto-check room info when input looks complete (code = 7 chars, name = 3+)
+    const isCode = val.length === 7 && /^[A-Z]{3}-[0-9]{3}$/.test(val);
+    const isName = val.length >= 3 && !isCode;
+    if (isCode || isName) {
+      S.socket.emit('room:info', { code: val, name: val });
+      S.socket.once('room:info-res', ({ found, name, hasPassword, isFull }) => {
+        if (!found) { $('join-err').textContent = 'Room not found — check the code'; return; }
+        if (isFull) { $('join-err').textContent = 'Room is full'; return; }
+        $('join-err').textContent = '';
+        const sub = $('join-room-name');
+        if (sub) sub.textContent = 'Joining: ' + name;
+        if (hasPassword) {
+          if (badge) badge.style.display = 'inline-flex';
+          if (hint)  { hint.textContent = 'This room requires a password'; hint.style.color = 'var(--amber)'; }
+          if (inp)   { inp.placeholder = 'Enter room password'; inp.focus(); }
+        }
+      });
+    }
+  });
+
+  // Room code: tap to copy
+  $('room-code-display').style.cursor = 'pointer';
+  $('room-code-display').onclick = () => {
+    navigator.clipboard?.writeText(S.code).then(() => toast('Code copied!')).catch(()=>{});
+  };
+});
+
+
+
+
+/* ═══════════════════════════════════════════════════════════
+   NEW FEATURES: Room creation, password, share, reconnect UI
+═══════════════════════════════════════════════════════════ */
+
+function onHostCreate() {
+  const name = $('room-name-input') ? $('room-name-input').value.trim() : '';
+  const pw   = $('room-pw-input')   ? $('room-pw-input').value.trim()   : '';
+  if (name.length > 0 && name.length < 3) {
+    $('create-err').textContent = 'Room name must be at least 3 characters';
+    return;
+  }
+  $('create-err').textContent = '';
+  S.socket.emit('room:create', { name, password: pw || null });
+}
+
+let _nameCheckTimer = null;
+function onRoomNameInput(val) {
+  const err = $('create-name-err');
+  if (!err) return;
+  if (val.length === 0) { err.textContent = ''; return; }
+  if (val.length < 3)   { err.textContent = 'Min 3 characters'; return; }
+  clearTimeout(_nameCheckTimer);
+  _nameCheckTimer = setTimeout(() => {
+    S.socket.emit('room:check-name', { name: val });
+  }, 400);
+}
+
+S.socket && S.socket.on('room:name-available', ({ available }) => {
+  const err = $('create-name-err');
+  if (err) err.textContent = available ? '' : 'Name already taken';
+});
+
+function shareRoom() {
+  const code = S.code;
+  const name = S.roomName || code;
+  const url  = location.origin + '?join=' + code;
+  const text = 'Join my MuDi room "' + name + '" → ' + url;
+
+  if (navigator.share) {
+    navigator.share({ title: 'MuDi — ' + name, text, url }).catch(() => {});
+  } else {
+    navigator.clipboard && navigator.clipboard.writeText(url).then(() => toast('Link copied to clipboard!')).catch(() => {
+      prompt('Copy this link:', url);
+    });
+  }
+}
+
+function showReconnectBanner(show) {
+  const b = $('reconnect-banner');
+  if (b) b.style.display = show ? 'flex' : 'none';
+}
+
+// Wire room:name-available after socket is ready
+function wireNameCheck() {
+  if (!S.socket) return;
+  S.socket.on('room:name-available', ({ available }) => {
+    const err = $('create-name-err');
+    if (err) err.textContent = available ? '✓ Available' : '✗ Name taken — choose another';
+    if (err) err.style.color = available ? 'var(--cyan)' : 'var(--red)';
+  });
+  S.socket.on('room:err', ({ msg }) => {
+    // Route create errors to the create screen
+    const ce = $('create-err');
+    if (ce && curScreen === 'create') { ce.textContent = msg; return; }
+    $('join-err').textContent = msg;
+    toast('⚠ ' + msg);
+  });
+}
+
+// Auto-fill join URL param + auto-fetch room info
+function handleJoinURL() {
+  const params = new URLSearchParams(location.search);
+  const code   = params.get('join');
+  const pw     = params.get('pw'); // optional pre-fill
+  if (!code) return;
+  const ci = $('code-input');
+  if (ci) ci.value = code.toUpperCase();
+  if (pw) { const pi = $('pw-input'); if (pi) pi.value = pw; }
+  goScreen('join');
+  // Ask server if this room needs a password so we can show/hide the field
+  if (S.socket) {
+    S.socket.emit('room:info', { code });
+    S.socket.once('room:info-res', ({ found, name, hasPassword, isFull }) => {
+      if (!found) { $('join-err').textContent = 'Room not found or expired'; return; }
+      if (isFull) { $('join-err').textContent = 'Room is full'; return; }
+      const pw = $('pw-required-badge');
+      if (pw) pw.style.display = hasPassword ? 'inline-flex' : 'none';
+      const hint = $('pw-hint');
+      if (hint && hasPassword) { hint.textContent = 'This room requires a password'; hint.style.color = 'var(--amber)'; }
+      const pwInp = $('pw-input');
+      if (pwInp && hasPassword) { pwInp.placeholder = 'Enter room password'; }
+      const sub = $('join-room-name');
+      if (sub) sub.textContent = 'Joining: ' + name;
+    });
+  }
+}
+
+</script>
+</body>
+</html>
