@@ -743,7 +743,16 @@ const STUN_SERVERS = [
   },
 ];
 const CHUNK_SIZE     = 16384;   // 16 KB per chunk
-const RELAY_CHUNK    = 65536;   // 64 KB chunks for socket.io relay (base64 encoded)
+const RELAY_CHUNK    = 65536;   // 64 KB chunks for socket.io relay
+
+// Fast base64 encoder — avoids btoa(String.fromCharCode(...arr)) which is
+// O(n²) due to spread operator creating huge argument lists for large arrays
+function uint8ToBase64(arr) {
+  let binary = '';
+  const len = arr.byteLength;
+  for (let i = 0; i < len; i++) binary += String.fromCharCode(arr[i]);
+  return btoa(binary);
+}
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
@@ -1349,6 +1358,9 @@ async function sendFile(file) {
     return;
   }
   S._transferInProgress = true;
+  // Refresh session TTL so it doesn't expire during a long transfer
+  const _sess = loadSession();
+  if (_sess) saveSession(_sess);
   $('prog-send-label').textContent = 'Computing SHA-256...';
   let buf, hash;
   try {
@@ -1427,34 +1439,58 @@ async function sendViaWebRTC(buf, name, hash, openDCs) {
 }
 
 async function sendViaRelay(buf, name, hash, startOffset = 0) {
-  // Chunked transfer via Socket.IO — works through any NAT/firewall
-  const total  = Math.ceil(buf.byteLength / RELAY_CHUNK);
+  const total    = Math.ceil(buf.byteLength / RELAY_CHUNK);
   const startSeq = Math.floor(startOffset / RELAY_CHUNK);
+  const MB       = (1024 * 1024);
 
-  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total });
-  await new Promise(r => setTimeout(r, 50));
+  console.log('[relay] sending', (buf.byteLength / MB).toFixed(1), 'MB in', total, 'chunks');
 
-  for (let seq = startSeq; seq < total; seq++) {
-    const start  = seq * RELAY_CHUNK;
-    const end    = Math.min(start + RELAY_CHUNK, buf.byteLength);
-    const chunk  = new Uint8Array(buf, start, end - start);
+  // Send start signal and wait for server ack before streaming chunks
+  await new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error('relay-start timeout')), 10000);
+    S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total }, () => {
+      clearTimeout(t); res();
+    });
+  });
 
-    // Convert to base64 for Socket.IO transport (binary blobs can get corrupted)
-    const b64 = btoa(String.fromCharCode(...chunk));
-    S.socket.emit('file:relay-chunk', { seq, data: b64, total });
+  // Stream chunks with window-based flow control
+  // Send up to WINDOW chunks ahead, wait for acks before continuing
+  const WINDOW = 4;  // max in-flight chunks
+  let nextToSend = startSeq;
+  let nextToAck  = startSeq;
 
-    const pct = (end / buf.byteLength);
-    $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
-    $('prog-send-label').textContent =
-      (end / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB (via server)';
+  return new Promise((resolve, reject) => {
+    function sendNext() {
+      while (nextToSend < total && (nextToSend - nextToAck) < WINDOW) {
+        const seq   = nextToSend++;
+        const start = seq * RELAY_CHUNK;
+        const end   = Math.min(start + RELAY_CHUNK, buf.byteLength);
+        const chunk = new Uint8Array(buf, start, end - start);
+        const b64   = uint8ToBase64(chunk);
 
-    // Yield every 4 chunks to keep the event loop responsive
-    if (seq % 4 === 3) await new Promise(r => setTimeout(r, 0));
-  }
+        S.socket.emit('file:relay-chunk', { seq, data: b64, total }, () => {
+          // Ack received — slide the window forward
+          nextToAck++;
+          const pct = Math.min(nextToAck, total) / total;
+          $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
+          $('prog-send-label').textContent =
+            (Math.min(nextToAck * RELAY_CHUNK, buf.byteLength) / MB).toFixed(2) + ' / ' +
+            (buf.byteLength / MB).toFixed(2) + ' MB';
 
-  S.socket.emit('file:relay-done');
-  $('prog-send-label').textContent = '✓ Sent — waiting for listeners to verify';
-  $('hash-badge-send').style.display = 'inline-flex';
+          if (nextToAck >= total) {
+            // All chunks acked — send done
+            S.socket.emit('file:relay-done');
+            $('prog-send-label').textContent = '✓ Sent — waiting for listeners to verify';
+            $('hash-badge-send').style.display = 'inline-flex';
+            resolve();
+          } else {
+            sendNext(); // send next batch
+          }
+        });
+      }
+    }
+    sendNext();
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1877,7 +1913,7 @@ function genQR(code) {
 let cdSecs=600, cdTimer;
 function startCountdown() {
   clearInterval(cdTimer);
-  cdSecs = 600;
+  cdSecs = 1800; // 30 minutes
   cdTimer = setInterval(() => {
     cdSecs--;
     const m=Math.floor(cdSecs/60), s=cdSecs%60;
@@ -1907,7 +1943,7 @@ function loadSession() {
     if (!raw) return null;
     const s = JSON.parse(raw);
     // Expire sessions older than 10 minutes (matches server room TTL)
-    if (Date.now() - s.savedAt > 10 * 60 * 1000) { clearSession(); return null; }
+    if (Date.now() - s.savedAt > 30 * 60 * 1000) { clearSession(); return null; } // 30min TTL
     return s;
   } catch(e) { return null; }
 }
@@ -2268,7 +2304,13 @@ function initSocket() {
     console.warn('[socket] disconnect reason:', reason);
 
     if (reason === 'io server disconnect') {
-      // Server explicitly closed the connection — hard reload
+      // Server explicitly closed the connection
+      if (S._transferInProgress) {
+        // Don't reload mid-transfer — mark as failed and let user retry
+        S._transferInProgress = false;
+        toast('Connection dropped during transfer — please reconnect and retry');
+        return;
+      }
       toast('Session ended by server');
       stopAudio();
       setTimeout(() => location.reload(), 2500);
