@@ -182,9 +182,14 @@ input[type=range].seek:disabled{opacity:.4;cursor:default;}
 .toast{
   position:fixed;bottom:calc(18px + var(--sab));left:var(--sp);right:var(--sp);
   transform:translateY(12px);background:var(--surf2);border:1px solid var(--bdr);
-  border-radius:10px;padding:9px 16px;font-size:clamp(10px,2.8vw,12px);color:var(--cyan);
-  text-align:center;word-break:break-word;opacity:0;transition:all .3s;z-index:200;pointer-events:none;
+  border-radius:10px;padding:11px 16px;font-size:clamp(11px,3vw,13px);color:var(--cyan);
+  text-align:center;word-break:break-word;opacity:0;transition:all .3s;z-index:200;
+  pointer-events:none;cursor:default;
+  /* Slightly larger shadow so it's easy to read */
+  box-shadow:0 4px 20px rgba(0,0,0,.4);
 }
+/* When visible, always allow tap-to-dismiss */
+.toast.on{ pointer-events:auto; }
 .toast.on{opacity:1;transform:translateY(0);}
 .toast.error-toast{
   background:rgba(226,75,74,.12);border-color:rgba(226,75,74,.4);
@@ -743,7 +748,7 @@ const STUN_SERVERS = [
   },
 ];
 const CHUNK_SIZE     = 16384;   // 16 KB per chunk
-const RELAY_CHUNK    = 256 * 1024;  // 256 KB per chunk — larger = fewer round trips
+const RELAY_CHUNK    = 64 * 1024;   // 64 KB — sweet spot: fast without blocking heartbeat
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
@@ -879,19 +884,21 @@ function sha256js(data) {
 }
 
 let _toastTmr;
-function toast(msg, dur=3000) {
+function toast(msg, dur) {
   const t = $('toast');
-  const isErr = msg.includes('⚠') || msg.includes('✗') || msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed');
+  const isErr = msg.includes('\u26A0') || msg.includes('\u2717') ||
+                msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed');
   t.textContent = msg;
   t.className   = 'toast on' + (isErr ? ' error-toast' : '');
   clearTimeout(_toastTmr);
-  // Errors stay 8s; if it's an error make it clickable to open panel
-  const d = isErr ? Math.max(dur, 8000) : dur;
+  // Duration: errors=12s, normal=6s (up from 3s — more readable on mobile)
+  const d = dur !== undefined ? dur : (isErr ? 12000 : 6000);
   if (isErr) {
     t.onclick = openErrPanel;
     logError(msg, null, '[toast]');
   } else {
-    t.onclick = null;
+    // Tap normal toast to dismiss immediately
+    t.onclick = () => { clearTimeout(_toastTmr); t.classList.remove('on'); };
   }
   _toastTmr = setTimeout(() => t.classList.remove('on'), d);
 }
@@ -1430,41 +1437,40 @@ async function sendViaWebRTC(buf, name, hash, openDCs) {
 }
 
 async function sendViaRelay(buf, name, hash, startOffset = 0) {
-  // Binary relay — Socket.IO v4 sends ArrayBuffer natively, no base64 needed.
-  // Fire-and-forget chunks; throttle by yielding every 8 chunks so the
-  // browser event loop stays alive (keeps ping/pong healthy).
   const MB    = 1024 * 1024;
   const total = Math.ceil(buf.byteLength / RELAY_CHUNK);
   const start = Math.floor(startOffset / RELAY_CHUNK);
 
-  console.log('[relay] binary send', (buf.byteLength / MB).toFixed(2), 'MB,', total, 'chunks of', (RELAY_CHUNK/1024), 'KB');
+  console.log('[relay] send', (buf.byteLength / MB).toFixed(2), 'MB in', total, 'chunks');
 
-  // Tell listeners a transfer is starting (no ack needed — socket is reliable)
   S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total });
+  await new Promise(r => setTimeout(r, 30));
 
-  // Tiny pause so relay-start reaches listeners before first chunk
-  await new Promise(r => setTimeout(r, 20));
+  // Max bytes we allow in Socket.IO's internal send buffer at once.
+  // Keeping this low prevents buffer bloat that starves the ping/pong
+  // heartbeat and causes false "transport close" disconnects.
+  const MAX_BUFFERED = 512 * 1024; // 512 KB
 
   for (let seq = start; seq < total; seq++) {
     const s = seq * RELAY_CHUNK;
     const e = Math.min(s + RELAY_CHUNK, buf.byteLength);
 
-    // Send the raw binary slice — no copy, no base64
-    // Socket.IO v4 serialises ArrayBuffer over the wire automatically
-    S.socket.emit('file:relay-chunk', {
-      seq,
-      total,
-      data: buf.slice(s, e)   // ArrayBuffer slice — zero-copy view
-    });
+    // Wait until the buffer has room — poll every 10ms
+    while (S.socket.io.engine && S.socket.io.engine.transport &&
+           S.socket.io.engine.transport.socket &&
+           S.socket.io.engine.transport.socket.bufferedAmount > MAX_BUFFERED) {
+      await new Promise(r => setTimeout(r, 10));
+    }
 
-    // Update progress
+    S.socket.emit('file:relay-chunk', { seq, total, data: buf.slice(s, e) });
+
     const pct = e / buf.byteLength;
     $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
     $('prog-send-label').textContent =
       (e / MB).toFixed(2) + ' / ' + (buf.byteLength / MB).toFixed(2) + ' MB';
 
-    // Yield every 8 chunks — keeps UI responsive without slowing transfer
-    if (seq % 8 === 7) await new Promise(r => setTimeout(r, 0));
+    // Always yield between chunks — keeps heartbeat traffic flowing
+    await new Promise(r => setTimeout(r, 0));
   }
 
   S.socket.emit('file:relay-done');
@@ -2307,16 +2313,31 @@ function initSocket() {
       return;
     }
 
+    if (S._transferInProgress) {
+      // Disconnect during file transfer — almost always caused by buffer
+      // pressure from the transfer itself. Don't show banner; socket.io
+      // will reconnect automatically and transfer can resume.
+      console.warn('[socket] disconnect during transfer (' + reason + ') — suppressing banner');
+      S.reconnecting = true;
+      // Only show banner if reconnect takes more than 15s during a transfer
+      clearTimeout(S._reconnectBannerTimer);
+      S._reconnectBannerTimer = setTimeout(() => {
+        if (S.reconnecting) {
+          S._transferInProgress = false;
+          showReconnectBanner(true);
+          toast('Transfer interrupted — please retry after reconnecting');
+        }
+      }, 15000);
+      return;
+    }
+
     if (reason === 'transport close' || reason === 'transport error') {
-      // Likely a brief network blip — socket.io will auto-reconnect
-      // Don't show banner immediately; wait 6s to see if it self-heals
       S.reconnecting = true;
       clearTimeout(S._reconnectBannerTimer);
       S._reconnectBannerTimer = setTimeout(() => {
         if (S.reconnecting) showReconnectBanner(true);
       }, 6000);
     } else {
-      // Other disconnect — show banner after short delay
       S.reconnecting = true;
       clearTimeout(S._reconnectBannerTimer);
       S._reconnectBannerTimer = setTimeout(() => {
