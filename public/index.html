@@ -743,16 +743,7 @@ const STUN_SERVERS = [
   },
 ];
 const CHUNK_SIZE     = 16384;   // 16 KB per chunk
-const RELAY_CHUNK    = 65536;   // 64 KB chunks for socket.io relay
-
-// Fast base64 encoder — avoids btoa(String.fromCharCode(...arr)) which is
-// O(n²) due to spread operator creating huge argument lists for large arrays
-function uint8ToBase64(arr) {
-  let binary = '';
-  const len = arr.byteLength;
-  for (let i = 0; i < len; i++) binary += String.fromCharCode(arr[i]);
-  return btoa(binary);
-}
+const RELAY_CHUNK    = 256 * 1024;  // 256 KB per chunk — larger = fewer round trips
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
@@ -1439,58 +1430,47 @@ async function sendViaWebRTC(buf, name, hash, openDCs) {
 }
 
 async function sendViaRelay(buf, name, hash, startOffset = 0) {
-  const total    = Math.ceil(buf.byteLength / RELAY_CHUNK);
-  const startSeq = Math.floor(startOffset / RELAY_CHUNK);
-  const MB       = (1024 * 1024);
+  // Binary relay — Socket.IO v4 sends ArrayBuffer natively, no base64 needed.
+  // Fire-and-forget chunks; throttle by yielding every 8 chunks so the
+  // browser event loop stays alive (keeps ping/pong healthy).
+  const MB    = 1024 * 1024;
+  const total = Math.ceil(buf.byteLength / RELAY_CHUNK);
+  const start = Math.floor(startOffset / RELAY_CHUNK);
 
-  console.log('[relay] sending', (buf.byteLength / MB).toFixed(1), 'MB in', total, 'chunks');
+  console.log('[relay] binary send', (buf.byteLength / MB).toFixed(2), 'MB,', total, 'chunks of', (RELAY_CHUNK/1024), 'KB');
 
-  // Send start signal and wait for server ack before streaming chunks
-  await new Promise((res, rej) => {
-    const t = setTimeout(() => rej(new Error('relay-start timeout')), 10000);
-    S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total }, () => {
-      clearTimeout(t); res();
+  // Tell listeners a transfer is starting (no ack needed — socket is reliable)
+  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total });
+
+  // Tiny pause so relay-start reaches listeners before first chunk
+  await new Promise(r => setTimeout(r, 20));
+
+  for (let seq = start; seq < total; seq++) {
+    const s = seq * RELAY_CHUNK;
+    const e = Math.min(s + RELAY_CHUNK, buf.byteLength);
+
+    // Send the raw binary slice — no copy, no base64
+    // Socket.IO v4 serialises ArrayBuffer over the wire automatically
+    S.socket.emit('file:relay-chunk', {
+      seq,
+      total,
+      data: buf.slice(s, e)   // ArrayBuffer slice — zero-copy view
     });
-  });
 
-  // Stream chunks with window-based flow control
-  // Send up to WINDOW chunks ahead, wait for acks before continuing
-  const WINDOW = 4;  // max in-flight chunks
-  let nextToSend = startSeq;
-  let nextToAck  = startSeq;
+    // Update progress
+    const pct = e / buf.byteLength;
+    $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
+    $('prog-send-label').textContent =
+      (e / MB).toFixed(2) + ' / ' + (buf.byteLength / MB).toFixed(2) + ' MB';
 
-  return new Promise((resolve, reject) => {
-    function sendNext() {
-      while (nextToSend < total && (nextToSend - nextToAck) < WINDOW) {
-        const seq   = nextToSend++;
-        const start = seq * RELAY_CHUNK;
-        const end   = Math.min(start + RELAY_CHUNK, buf.byteLength);
-        const chunk = new Uint8Array(buf, start, end - start);
-        const b64   = uint8ToBase64(chunk);
+    // Yield every 8 chunks — keeps UI responsive without slowing transfer
+    if (seq % 8 === 7) await new Promise(r => setTimeout(r, 0));
+  }
 
-        S.socket.emit('file:relay-chunk', { seq, data: b64, total }, () => {
-          // Ack received — slide the window forward
-          nextToAck++;
-          const pct = Math.min(nextToAck, total) / total;
-          $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
-          $('prog-send-label').textContent =
-            (Math.min(nextToAck * RELAY_CHUNK, buf.byteLength) / MB).toFixed(2) + ' / ' +
-            (buf.byteLength / MB).toFixed(2) + ' MB';
-
-          if (nextToAck >= total) {
-            // All chunks acked — send done
-            S.socket.emit('file:relay-done');
-            $('prog-send-label').textContent = '✓ Sent — waiting for listeners to verify';
-            $('hash-badge-send').style.display = 'inline-flex';
-            resolve();
-          } else {
-            sendNext(); // send next batch
-          }
-        });
-      }
-    }
-    sendNext();
-  });
+  S.socket.emit('file:relay-done');
+  $('prog-send-label').textContent  = '✓ Sent — waiting for listeners to verify';
+  $('hash-badge-send').style.display = 'inline-flex';
+  console.log('[relay] send complete');
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2165,17 +2145,27 @@ function initSocket() {
 
   S.socket.on('file:relay-chunk', ({ seq, data, total }) => {
     if (!_relayChunks || !_relayMeta) return;
-    // Decode base64 back to Uint8Array
-    const bin = atob(data);
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    _relayChunks[seq] = arr;
 
-    const received = _relayChunks.filter(Boolean).length;
-    const pct = received / total;
+    // data arrives as ArrayBuffer (binary) or Buffer (Node) — handle both
+    let arr;
+    if (data instanceof ArrayBuffer) {
+      arr = new Uint8Array(data);
+    } else if (ArrayBuffer.isView(data)) {
+      arr = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    } else {
+      // Fallback: base64 string (shouldn't happen with v4 binary)
+      const bin = atob(String(data));
+      arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    }
+    _relayChunks[seq] = arr;
+    _relayMeta.received = (_relayMeta.received || 0) + 1;
+
+    const pct = _relayMeta.received / total;
     $('prog-recv').style.width       = (pct * 100).toFixed(1) + '%';
-    $('prog-recv-label').textContent = (received / total * _relayMeta.size / 1024 / 1024).toFixed(2)
-      + ' / ' + (_relayMeta.size / 1024 / 1024).toFixed(2) + ' MB';
+    $('prog-recv-label').textContent =
+      (Math.min(_relayMeta.received * RELAY_CHUNK, _relayMeta.size) / (1024*1024)).toFixed(2) +
+      ' / ' + (_relayMeta.size / (1024*1024)).toFixed(2) + ' MB';
   });
 
   S.socket.on('file:relay-done', async () => {

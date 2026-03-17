@@ -313,21 +313,18 @@ function startServer() {
     // ── Socket.IO file relay (fallback when WebRTC P2P fails over internet) ─
     // Master sends chunks to server → server forwards to listeners
     // Each chunk: { seq, data (base64), total }
-    socket.on('file:relay-chunk', (payload, ack) => {
-      const { seq, data, total } = payload;
+    socket.on('file:relay-chunk', ({ seq, data, total }) => {
       const room = rooms.get(socket.data.code);
-      if (!room || room.masterSid !== socket.id) { if (typeof ack === 'function') ack(); return; }
+      if (!room || room.masterSid !== socket.id) return;
+      // Forward binary directly — Socket.IO preserves ArrayBuffer type
       socket.to(room.code).emit('file:relay-chunk', { seq, data, total });
-      if (typeof ack === 'function') ack(); // backpressure ack to host
     });
 
-    socket.on('file:relay-start', (payload, ack) => {
-      const { name, size, hash, total } = payload;
+    socket.on('file:relay-start', ({ name, size, hash, total }) => {
       const room = rooms.get(socket.data.code);
-      if (!room || room.masterSid !== socket.id) { if (typeof ack === 'function') ack(); return; }
-      console.log(`[relay] start "${name}" ${(size/1024/1024).toFixed(1)}MB ${total} chunks`);
+      if (!room || room.masterSid !== socket.id) return;
+      console.log(`[relay] "${name}" ${(size/1024/1024).toFixed(1)}MB, ${total} chunks`);
       socket.to(room.code).emit('file:relay-start', { name, size, hash, total });
-      if (typeof ack === 'function') ack();
     });
 
     socket.on('file:relay-done', () => {
