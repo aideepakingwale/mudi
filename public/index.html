@@ -951,39 +951,34 @@ async function initPC(targetSid) {
   };
 
   pc.oniceconnectionstatechange = () => {
-    console.log('[ICE] connection state:', pc.iceConnectionState);
-    if (pc.iceConnectionState === 'failed') {
-      console.error('[ICE] FAILED — no route found. If over internet, TURN relay may be needed.');
-      toast('⚠ Connection failed — check both devices are online');
+    const ist = pc.iceConnectionState;
+    console.log('[ICE] state:', ist);
+    // 'failed' and 'disconnected' are normal over internet — relay handles it
+    // Only log, never show as error to user
+    if (ist === 'failed') {
+      console.warn('[ICE] gathering failed — using relay for file transfer');
     }
   };
 
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
-    console.log('[WebRTC] state to', sid.slice(0,8), ':', st);
-    const connectedCount = [...S.peers.values()].filter(p => p.pc.connectionState === 'connected').length;
-    if (connectedCount > 0) {
+    console.log('[WebRTC] P2P state to', sid.slice(0,8), ':', st);
+
+    if (st === 'connected') {
+      // P2P connected — upgrade badge to show it
+      const connectedCount = [...S.peers.values()].filter(p => p.pc.connectionState === 'connected').length;
       updateConnBadge('connected');
-      $('p2p-label').textContent = S.role === 'master' ? connectedCount + ' P2P' : 'P2P ✓';
+      $('p2p-label').textContent = S.role === 'master' ? connectedCount + ' P2P ✓' : 'P2P ✓';
       $('r-transport').textContent = 'P2P';
-      $('av-ring-you').classList.add('on');
-      $('av-ring-peer').classList.add('on');
-    }
-    if (st === 'connected' && S.role === 'master') {
-      const total = S.listenerCount;
-      toast('Listener connected (' + connectedCount + '/' + total + ') — you can now share a file');
-    }
-    if (st === 'failed') {
-      console.error('[WebRTC] connection FAILED to', sid.slice(0,8));
-      updateConnBadge('failed');
-      toast('⚠ P2P failed — retrying via relay...');
-      // Auto-retry once — second attempt will use TURN relay via trickle ICE
-      setTimeout(() => {
-        if (S.peers.get(sid)?.pc.connectionState === 'failed' && S.role === 'master') {
-          console.log('[WebRTC] retrying connection to', sid.slice(0,8));
-          initPC(sid);
-        }
-      }, 1500);
+      console.log('[WebRTC] P2P established — using direct transfer');
+    } else if (st === 'failed' || st === 'disconnected') {
+      // P2P failed — DON'T show this as an error to the user
+      // Room is still connected via Socket.IO; relay will handle file transfer
+      console.warn('[WebRTC] P2P unavailable (' + st + ') — relay mode active');
+      $('p2p-label').textContent = 'Relay ✓';
+      $('r-transport').textContent = 'Relay';
+      // Keep the connected badge — we ARE connected, just not P2P
+      // Don't show a toast — this is normal over the internet
     }
   };
 
@@ -1174,8 +1169,8 @@ async function sendFile(file) {
     await sendViaWebRTC(buf, file.name, hash, openDCs);
   } else {
     // No open DataChannel — use Socket.IO relay immediately (works over any network)
-    console.log('[transfer] Socket.IO relay path — no open P2P channels');
-    toast('P2P unavailable — sending via server relay');
+    console.log('[transfer] using relay (no P2P — normal for internet connections)');
+    // No toast — relay is a normal path, not an error
     await sendViaRelay(buf, file.name, hash);
   }
 }
@@ -1195,7 +1190,7 @@ async function sendViaWebRTC(buf, name, hash, openDCs) {
       const dcs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
       if (dcs.length === 0) {
         // All DCs closed mid-transfer — fall back to relay for remaining data
-        console.warn('[transfer] P2P closed mid-transfer — switching to relay');
+        console.log('[transfer] P2P closed — continuing via relay from offset', offset);
         sendViaRelay(buf, name, hash, offset);
         resolve();
         return;
@@ -1246,14 +1241,14 @@ async function sendViaRelay(buf, name, hash, startOffset = 0) {
     const pct = (end / buf.byteLength);
     $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
     $('prog-send-label').textContent =
-      (end / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB (relay)';
+      (end / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB (via server)';
 
     // Yield every 4 chunks to keep the event loop responsive
     if (seq % 4 === 3) await new Promise(r => setTimeout(r, 0));
   }
 
   S.socket.emit('file:relay-done');
-  $('prog-send-label').textContent = '✓ Sent via relay — waiting for listeners to verify';
+  $('prog-send-label').textContent = '✓ Sent — waiting for listeners to verify';
   $('hash-badge-send').style.display = 'inline-flex';
 }
 
@@ -1822,8 +1817,17 @@ function initSocket() {
     updateListenerUI();
     if (curScreen === 'host') goScreen('room');
     resetFileUI();
+
+    // Show "Connected" immediately — socket room connection is established
+    // WebRTC P2P will be attempted in parallel but is optional (relay works without it)
+    updateConnBadge('connected');
+    $('p2p-label').textContent = 'Room ✓';
+    $('av-ring-you').classList.add('on');
+    $('av-ring-peer').classList.add('on');
+
+    // Attempt WebRTC P2P silently in the background (improves speed if it works)
     initPC(peerSid);
-    toast('Listener ' + listenerCount + ' connected — establishing P2P...');
+    toast('Listener ' + listenerCount + ' joined — ready to share files');
   });
 
   S.socket.on('peer:left', ({ role, peerSid, permanent, listenerCount }) => {
@@ -1856,6 +1860,11 @@ function initSocket() {
   /* WebRTC relay */
   S.socket.on('rtc:offer',  async ({ from, sdp }) => {
     S.peerSid = from;
+    // Mark as connected via socket — P2P is background optimisation
+    updateConnBadge('connected');
+    $('p2p-label').textContent = 'Room ✓';
+    $('av-ring-you').classList.add('on');
+    $('av-ring-peer').classList.add('on');
     teardownPC(from);
     await initPC(from);
     await handleOffer({ from, sdp });
@@ -1931,7 +1940,7 @@ function initSocket() {
         $('hash-badge-recv').style.display = 'inline-flex';
         $('wait-sync-msg').style.display   = 'block';
         S.socket.emit('file:ready', { hash });
-        toast('File received & verified (relay)');
+        toast('File received & verified ✓');
       } else {
         $('prog-recv-label').textContent = '✗ Hash mismatch — please retry';
         $('prog-recv-label').style.color = 'var(--red)';
