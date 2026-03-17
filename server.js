@@ -389,7 +389,7 @@ function startServer() {
           rooms.delete(code);
           io.to(code).emit('peer:left', { role: 'master', permanent: true });
           console.log(`[room] expired "${room.name}" (no host reconnect)`);
-        }, 30000);
+        }, 5 * 60 * 1000); // 5 minutes — gives mobile time to reconnect
         socket.to(code).emit('peer:left', { role: 'master', permanent: false });
       } else {
         room.followers.delete(socket.id);

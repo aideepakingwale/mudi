@@ -748,7 +748,81 @@ const STUN_SERVERS = [
   },
 ];
 const CHUNK_SIZE     = 16384;   // 16 KB per chunk
-const RELAY_CHUNK    = 64 * 1024;   // 64 KB — sweet spot: fast without blocking heartbeat
+const RELAY_CHUNK    = 64 * 1024;   // 64 KB chunks
+
+// Fast yield — MessageChannel has no minimum delay (unlike setTimeout's 4ms)
+// Use this between chunk batches to keep the event loop alive without slowing transfer
+const _mc = new MessageChannel();
+function yieldToEventLoop() {
+  return new Promise(r => {
+    _mc.port2.onmessage = r;
+    _mc.port1.postMessage(0);
+  });
+}
+
+// How many chunks to send before yielding to the event loop.
+// 16 × 64KB = 1MB per batch — fast enough, but yields every ~1-2ms
+// so heartbeats always get through between batches.
+const RELAY_BATCH = 16;
+
+// ── Compression ───────────────────────────────────────────────────────
+// Only compress formats that benefit. Audio codecs (MP3/AAC/OGG/FLAC)
+// are already compressed — re-compressing them wastes CPU for ~0% gain.
+// WAV / AIFF are raw PCM — typically compress 3–5x with deflate.
+const COMPRESSIBLE_EXTS = /\.(wav|aiff|aif|pcm|raw|bwf)$/i;
+
+function shouldCompress(filename) {
+  // Check if CompressionStream is supported (Chrome 80+, Firefox 113+, Safari 16.4+)
+  if (typeof CompressionStream === 'undefined') return false;
+  return COMPRESSIBLE_EXTS.test(filename || '');
+}
+
+async function compressBuf(buf) {
+  // Deflate-raw: fastest, good ratio, no gzip header overhead
+  const cs     = new CompressionStream('deflate-raw');
+  const writer = cs.writable.getWriter();
+  const reader = cs.readable.getReader();
+
+  writer.write(new Uint8Array(buf));
+  writer.close();
+
+  const chunks = [];
+  let totalLen = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    totalLen += value.byteLength;
+  }
+
+  const out = new Uint8Array(totalLen);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out.buffer;
+}
+
+async function decompressBuf(buf) {
+  const ds     = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+
+  writer.write(new Uint8Array(buf));
+  writer.close();
+
+  const chunks = [];
+  let totalLen = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    totalLen += value.byteLength;
+  }
+
+  const out = new Uint8Array(totalLen);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out.buffer;
+}
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
@@ -1272,7 +1346,7 @@ function setupDC(dc) {
       try {
         const parsed = JSON.parse(data);
         if (parsed && parsed.type === 'meta') {
-          meta   = parsed;
+          meta   = parsed;   // meta.compressed tells us whether to decompress
           chunks = []; rxBytes = 0;
           $('wait-file').style.display     = 'none';
           $('recv-block').style.display    = 'block';
@@ -1359,20 +1433,43 @@ async function sendFile(file) {
   // Refresh session TTL so it doesn't expire during a long transfer
   const _sess = loadSession();
   if (_sess) saveSession(_sess);
-  $('prog-send-label').textContent = 'Computing SHA-256...';
-  let buf, hash;
+  $('prog-send-label').textContent = 'Reading file...';
+  let buf, txBuf, hash, compressed = false;
   try {
     buf  = await file.arrayBuffer();
-    hash = await sha256hex(buf.slice(0));
+
+    $('prog-send-label').textContent = 'Computing SHA-256...';
+    hash = await sha256hex(buf.slice(0));  // hash of ORIGINAL always
+
+    // Compress if format benefits from it
+    if (shouldCompress(file.name)) {
+      $('prog-send-label').textContent = 'Compressing...';
+      try {
+        const before = buf.byteLength;
+        txBuf = await compressBuf(buf);
+        const ratio = (txBuf.byteLength / before * 100).toFixed(0);
+        compressed = true;
+        console.log('[compress] ' + (before/1024/1024).toFixed(2) + 'MB -> '
+          + (txBuf.byteLength/1024/1024).toFixed(2) + 'MB (' + ratio + '%)');
+        toast('Compressed to ' + ratio + '% — faster transfer!', 4000);
+      } catch(e) {
+        console.warn('[compress] failed, sending uncompressed:', e.message);
+        txBuf = buf;
+      }
+    } else {
+      txBuf = buf;
+    }
   } catch(e) {
     S._transferInProgress = false;
     throw e;
   }
 
-  S.fileBuf  = buf; S.fileHash = hash;
+  S.fileBuf  = buf;   // store ORIGINAL (decompressed) for playback
+  S.fileHash = hash;
   S.fileName = file.name; S.fileSize = buf.byteLength;
 
-  // Announce via socket so listeners show filename immediately
+  // Announce: original size + hash so listener can verify after decompress
+  // compressed flag tells listener to decompress on receipt
   S.socket.emit('file:meta', { name: file.name, size: buf.byteLength, hash });
 
   const openDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
@@ -1380,18 +1477,18 @@ async function sendFile(file) {
   try {
     if (openDCs.length > 0) {
       console.log('[transfer] P2P path — open DCs:', openDCs.length);
-      await sendViaWebRTC(buf, file.name, hash, openDCs);
+      await sendViaWebRTC(txBuf, file.name, hash, openDCs, compressed);
     } else {
       console.log('[transfer] relay path — no open P2P DCs (normal for internet)');
-      await sendViaRelay(buf, file.name, hash);
+      await sendViaRelay(txBuf, file.name, hash, 0, compressed);
     }
   } finally {
     S._transferInProgress = false;
   }
 }
 
-async function sendViaWebRTC(buf, name, hash, openDCs) {
-  const metaStr = JSON.stringify({ type: 'meta', name, size: buf.byteLength, hash });
+async function sendViaWebRTC(buf, name, hash, openDCs, compressed = false) {
+  const metaStr = JSON.stringify({ type: 'meta', name, size: buf.byteLength, hash, compressed });
   for (const dc of openDCs) dc.send(metaStr);
   await new Promise(r => setTimeout(r, 0));
 
@@ -1432,45 +1529,51 @@ async function sendViaWebRTC(buf, name, hash, openDCs) {
       $('hash-badge-send').style.display = 'inline-flex';
       resolve();
     }
-    pump();
+    // Use MessageChannel yield so pump() reschedules without 4ms delay
+    _mc.port2.onmessage = pump;
+    _mc.port1.postMessage(0);
   });
 }
 
-async function sendViaRelay(buf, name, hash, startOffset = 0) {
+async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false) {
   const MB    = 1024 * 1024;
   const total = Math.ceil(buf.byteLength / RELAY_CHUNK);
   const start = Math.floor(startOffset / RELAY_CHUNK);
 
-  console.log('[relay] send', (buf.byteLength / MB).toFixed(2), 'MB in', total, 'chunks');
+  console.log('[relay] send', (buf.byteLength / MB).toFixed(2), 'MB,', total,
+    'chunks,', RELAY_BATCH, 'per batch', compressed ? '(compressed)' : '');
 
-  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total });
-  await new Promise(r => setTimeout(r, 30));
+  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total, compressed });
 
-  // Max bytes we allow in Socket.IO's internal send buffer at once.
-  // Keeping this low prevents buffer bloat that starves the ping/pong
-  // heartbeat and causes false "transport close" disconnects.
-  const MAX_BUFFERED = 512 * 1024; // 512 KB
+  // Brief pause so relay-start is received before first chunk arrives
+  await yieldToEventLoop();
 
-  for (let seq = start; seq < total; seq++) {
-    const s = seq * RELAY_CHUNK;
-    const e = Math.min(s + RELAY_CHUNK, buf.byteLength);
-
-    // Wait until the buffer has room — poll every 10ms
-    while (S.socket.io.engine && S.socket.io.engine.transport &&
-           S.socket.io.engine.transport.socket &&
-           S.socket.io.engine.transport.socket.bufferedAmount > MAX_BUFFERED) {
-      await new Promise(r => setTimeout(r, 10));
+  let seq = start;
+  while (seq < total) {
+    // Send a batch of RELAY_BATCH chunks synchronously (no await inside batch)
+    const batchEnd = Math.min(seq + RELAY_BATCH, total);
+    for (let i = seq; i < batchEnd; i++) {
+      const s = i * RELAY_CHUNK;
+      const e = Math.min(s + RELAY_CHUNK, buf.byteLength);
+      S.socket.emit('file:relay-chunk', { seq: i, total, data: buf.slice(s, e) });
     }
 
-    S.socket.emit('file:relay-chunk', { seq, total, data: buf.slice(s, e) });
-
-    const pct = e / buf.byteLength;
-    $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
+    // Update progress once per batch (not per chunk — avoids DOM thrash)
+    const lastEnd = Math.min(batchEnd * RELAY_CHUNK, buf.byteLength);
+    const pct = lastEnd / buf.byteLength;
+    $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
     $('prog-send-label').textContent =
-      (e / MB).toFixed(2) + ' / ' + (buf.byteLength / MB).toFixed(2) + ' MB';
+      (lastEnd / MB).toFixed(2) + ' / ' + (buf.byteLength / MB).toFixed(2) + ' MB';
 
-    // Always yield between chunks — keeps heartbeat traffic flowing
-    await new Promise(r => setTimeout(r, 0));
+    seq = batchEnd;
+
+    // Yield once per batch — MessageChannel fires immediately (no 4ms minimum)
+    // This keeps the Socket.IO ping/pong heartbeat alive between batches
+    // Also refresh session TTL every 32 batches (~2MB of transfer)
+    if (Math.floor(seq / RELAY_BATCH) % 32 === 0) {
+      const _s = loadSession(); if (_s) saveSession(_s);
+    }
+    await yieldToEventLoop();
   }
 
   S.socket.emit('file:relay-done');
@@ -1929,7 +2032,7 @@ function loadSession() {
     if (!raw) return null;
     const s = JSON.parse(raw);
     // Expire sessions older than 10 minutes (matches server room TTL)
-    if (Date.now() - s.savedAt > 30 * 60 * 1000) { clearSession(); return null; } // 30min TTL
+    if (Date.now() - s.savedAt > 60 * 60 * 1000) { clearSession(); return null; } // 60min TTL
     return s;
   } catch(e) { return null; }
 }
@@ -2145,9 +2248,9 @@ function initSocket() {
   let _relayChunks = null;
   let _relayMeta   = null;
 
-  S.socket.on('file:relay-start', ({ name, size, hash, total }) => {
-    console.log('[relay] start receiving:', name, size, 'bytes,', total, 'chunks');
-    _relayMeta   = { name, size, hash, total };
+  S.socket.on('file:relay-start', ({ name, size, hash, total, compressed }) => {
+    console.log('[relay] start receiving:', name, size, 'bytes,', total, 'chunks', compressed ? '(compressed)' : '(raw)');
+    _relayMeta   = { name, size, hash, total, compressed: !!compressed };
     _relayChunks = new Array(total);
     $('wait-file').style.display     = 'none';
     $('recv-block').style.display    = 'block';
@@ -2188,19 +2291,37 @@ function initSocket() {
     console.log('[relay] all chunks received — assembling');
     $('prog-recv-label').textContent = 'Verifying SHA-256...';
 
-    // Assemble all chunks
-    const assembled = new Uint8Array(_relayMeta.size);
+    // Assemble received chunks
+    const totalBytes = _relayChunks.reduce((s, c) => s + (c ? c.byteLength : 0), 0);
+    const assembled  = new Uint8Array(totalBytes);
     let off = 0;
     for (const chunk of _relayChunks) {
       if (!chunk) continue;
       assembled.set(chunk, off);
       off += chunk.byteLength;
     }
-
-    S.fileBuf  = assembled.buffer;
-    S.fileName = _relayMeta.name;
-    S.fileSize = _relayMeta.size;
     _relayChunks = null;
+
+    // Decompress if host sent compressed data
+    let finalBuf = assembled.buffer;
+    if (_relayMeta.compressed && typeof DecompressionStream !== 'undefined') {
+      $('prog-recv-label').textContent = 'Decompressing...';
+      try {
+        finalBuf = await decompressBuf(finalBuf);
+        console.log('[decompress] ' + (assembled.byteLength/1024/1024).toFixed(2) + 'MB -> '
+          + (finalBuf.byteLength/1024/1024).toFixed(2) + 'MB');
+      } catch(e) {
+        logError('Decompression error: ' + e.message, e.stack, 'relay decompress');
+        $('prog-recv-label').textContent = 'Decompression failed — please retry';
+        $('prog-recv-label').style.color = 'var(--red)';
+        _relayMeta = null;
+        return;
+      }
+    }
+
+    S.fileBuf  = finalBuf;
+    S.fileName = _relayMeta.name;
+    S.fileSize = finalBuf.byteLength;
 
     try {
       const hash = await sha256hex(S.fileBuf.slice(0));
