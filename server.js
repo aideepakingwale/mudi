@@ -101,6 +101,83 @@ function startServer() {
     res.sendFile(path.join(__dirname, 'public', 'terms.html'))
   );
 
+  // ── HTTP file transfer ───────────────────────────────────────────────────
+  // Host uploads file via HTTP POST (no socket overhead)
+  // Listener downloads via HTTP GET using the transfer token
+  const transferStore = new Map(); // token → { buf, meta, roomCode, expires }
+
+  // Clean up stale transfers every 5 minutes
+  setInterval(() => {
+    const now = Date.now();
+    for (const [token, t] of transferStore) {
+      if (t.expires < now) { transferStore.delete(token); console.log('[transfer] expired', token); }
+    }
+  }, 5 * 60 * 1000);
+
+  // Host uploads file — returns a transfer token
+  app.post('/transfer/upload', requireAuth, (req, res) => {
+    const roomCode = req.query.room;
+    const fileName = req.query.name || 'audio';
+    const fileHash = req.query.hash || '';
+    const fileSize = parseInt(req.query.size || '0', 10);
+    const compressed = req.query.compressed === '1';
+
+    if (!roomCode) return res.status(400).json({ error: 'Missing room code' });
+
+    const chunks = [];
+    let received = 0;
+
+    req.on('data', chunk => {
+      chunks.push(chunk);
+      received += chunk.length;
+    });
+
+    req.on('end', () => {
+      const buf   = Buffer.concat(chunks);
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+      transferStore.set(token, {
+        buf,
+        meta: { name: fileName, size: fileSize || buf.length, hash: fileHash, compressed },
+        roomCode,
+        expires: Date.now() + 30 * 60 * 1000, // 30 min
+      });
+
+      console.log('[transfer] stored', (buf.length/1024/1024).toFixed(2), 'MB token:', token);
+
+      // Notify listeners via socket that file is ready to download
+      const room = rooms.get(roomCode.toUpperCase());
+      if (room) {
+        io.to(room.code).emit('file:http-ready', {
+          token,
+          name: fileName,
+          size: fileSize || buf.length,
+          hash: fileHash,
+          compressed,
+        });
+      }
+
+      res.json({ ok: true, token });
+    });
+
+    req.on('error', err => {
+      console.error('[transfer] upload error:', err.message);
+      res.status(500).json({ error: err.message });
+    });
+  });
+
+  // Listener downloads file by token
+  app.get('/transfer/download/:token', requireAuth, (req, res) => {
+    const entry = transferStore.get(req.params.token);
+    if (!entry) return res.status(404).json({ error: 'Transfer not found or expired' });
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', entry.buf.length);
+    res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(entry.meta.name) + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(entry.buf);
+  });
+
   // ── Login page (public) ───────────────────────────────────────────────────
   app.get('/login', (req, res) => {
     if (req.isAuthenticated()) return res.redirect('/');

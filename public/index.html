@@ -1536,50 +1536,60 @@ async function sendViaWebRTC(buf, name, hash, openDCs, compressed = false) {
 }
 
 async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false) {
-  const MB    = 1024 * 1024;
-  const total = Math.ceil(buf.byteLength / RELAY_CHUNK);
-  const start = Math.floor(startOffset / RELAY_CHUNK);
+  // HTTP upload — much faster than socket.io relay
+  // No JSON framing overhead, browser handles streaming natively
+  const MB = 1024 * 1024;
+  console.log('[relay] HTTP upload', (buf.byteLength / MB).toFixed(2), 'MB',
+    compressed ? '(compressed)' : '');
 
-  console.log('[relay] send', (buf.byteLength / MB).toFixed(2), 'MB,', total,
-    'chunks,', RELAY_BATCH, 'per batch', compressed ? '(compressed)' : '');
+  $('prog-send-label').textContent = 'Uploading...';
+  $('prog-send').style.width = '0%';
 
-  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total, compressed });
+  const params = new URLSearchParams({
+    room:       S.code || '',
+    name:       name,
+    hash:       hash,
+    size:       String(buf.byteLength),
+    compressed: compressed ? '1' : '0',
+  });
 
-  // Brief pause so relay-start is received before first chunk arrives
-  await yieldToEventLoop();
+  try {
+    // Use XMLHttpRequest so we get upload progress events
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/transfer/upload?' + params.toString());
 
-  let seq = start;
-  while (seq < total) {
-    // Send a batch of RELAY_BATCH chunks synchronously (no await inside batch)
-    const batchEnd = Math.min(seq + RELAY_BATCH, total);
-    for (let i = seq; i < batchEnd; i++) {
-      const s = i * RELAY_CHUNK;
-      const e = Math.min(s + RELAY_CHUNK, buf.byteLength);
-      S.socket.emit('file:relay-chunk', { seq: i, total, data: buf.slice(s, e) });
-    }
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = e.loaded / e.total;
+          $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
+          $('prog-send-label').textContent =
+            (e.loaded / MB).toFixed(2) + ' / ' + (e.total / MB).toFixed(2) + ' MB';
+        }
+      };
 
-    // Update progress once per batch (not per chunk — avoids DOM thrash)
-    const lastEnd = Math.min(batchEnd * RELAY_CHUNK, buf.byteLength);
-    const pct = lastEnd / buf.byteLength;
-    $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
-    $('prog-send-label').textContent =
-      (lastEnd / MB).toFixed(2) + ' / ' + (buf.byteLength / MB).toFixed(2) + ' MB';
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          resolve(JSON.parse(xhr.responseText));
+        } else {
+          reject(new Error('Upload failed: ' + xhr.status + ' ' + xhr.responseText));
+        }
+      };
 
-    seq = batchEnd;
+      xhr.onerror = () => reject(new Error('Upload network error'));
+      xhr.ontimeout = () => reject(new Error('Upload timed out'));
+      xhr.timeout = 10 * 60 * 1000; // 10 min max upload time
 
-    // Yield once per batch — MessageChannel fires immediately (no 4ms minimum)
-    // This keeps the Socket.IO ping/pong heartbeat alive between batches
-    // Also refresh session TTL every 32 batches (~2MB of transfer)
-    if (Math.floor(seq / RELAY_BATCH) % 32 === 0) {
-      const _s = loadSession(); if (_s) saveSession(_s);
-    }
-    await yieldToEventLoop();
+      xhr.send(buf);
+    });
+
+    $('prog-send-label').textContent  = '✓ Uploaded — listeners downloading...';
+    $('hash-badge-send').style.display = 'inline-flex';
+    console.log('[relay] HTTP upload complete');
+
+  } catch (err) {
+    throw new Error('HTTP upload failed: ' + err.message);
   }
-
-  S.socket.emit('file:relay-done');
-  $('prog-send-label').textContent  = '✓ Sent — waiting for listeners to verify';
-  $('hash-badge-send').style.display = 'inline-flex';
-  console.log('[relay] send complete');
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2208,10 +2218,7 @@ function initSocket() {
         $('p2p-label').textContent = 'Waiting...';
         $('conn-badge').className = 'badge badge-wait';
         $('conn-badge').innerHTML = '<span class="dot dot-blink"></span>Reconnecting';
-        // Clear partial relay state — host will resend from the beginning
-        _relayChunks = null;
-        _relayMeta   = null;
-        // Reset receive UI to "waiting" state
+        // Reset receive UI — host will re-upload when reconnected
         $('recv-block').style.display    = 'none';
         $('wait-file').style.display     = 'block';
         $('prog-recv').style.width       = '0%';
@@ -2244,106 +2251,80 @@ function initSocket() {
     $('recv-fsize').textContent = (size/1024/1024).toFixed(2)+' MB';
   });
 
-  /* File via Socket.IO relay (internet fallback) */
-  let _relayChunks = null;
-  let _relayMeta   = null;
+  /* File via HTTP download (host uploaded to server, we fetch it) */
+  S.socket.on('file:http-ready', async ({ token, name, size, hash, compressed }) => {
+    console.log('[relay] HTTP download ready:', name, (size/1024/1024).toFixed(2), 'MB');
 
-  S.socket.on('file:relay-start', ({ name, size, hash, total, compressed }) => {
-    console.log('[relay] start receiving:', name, size, 'bytes,', total, 'chunks', compressed ? '(compressed)' : '(raw)');
-    _relayMeta   = { name, size, hash, total, compressed: !!compressed };
-    _relayChunks = new Array(total);
     $('wait-file').style.display     = 'none';
     $('recv-block').style.display    = 'block';
     $('recv-fname').textContent      = name;
     $('recv-fsize').textContent      = (size/1024/1024).toFixed(2) + ' MB';
-    $('prog-recv-label').textContent = 'Receiving via relay...';
+    $('prog-recv-label').textContent = 'Downloading...';
     $('prog-recv').style.width       = '0%';
     $('prog-recv-label').style.color = '';
-  });
-
-  S.socket.on('file:relay-chunk', ({ seq, data, total }) => {
-    if (!_relayChunks || !_relayMeta) return;
-
-    // data arrives as ArrayBuffer (binary) or Buffer (Node) — handle both
-    let arr;
-    if (data instanceof ArrayBuffer) {
-      arr = new Uint8Array(data);
-    } else if (ArrayBuffer.isView(data)) {
-      arr = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    } else {
-      // Fallback: base64 string (shouldn't happen with v4 binary)
-      const bin = atob(String(data));
-      arr = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    }
-    _relayChunks[seq] = arr;
-    _relayMeta.received = (_relayMeta.received || 0) + 1;
-
-    const pct = _relayMeta.received / total;
-    $('prog-recv').style.width       = (pct * 100).toFixed(1) + '%';
-    $('prog-recv-label').textContent =
-      (Math.min(_relayMeta.received * RELAY_CHUNK, _relayMeta.size) / (1024*1024)).toFixed(2) +
-      ' / ' + (_relayMeta.size / (1024*1024)).toFixed(2) + ' MB';
-  });
-
-  S.socket.on('file:relay-done', async () => {
-    if (!_relayChunks || !_relayMeta) return;
-    console.log('[relay] all chunks received — assembling');
-    $('prog-recv-label').textContent = 'Verifying SHA-256...';
-
-    // Assemble received chunks
-    const totalBytes = _relayChunks.reduce((s, c) => s + (c ? c.byteLength : 0), 0);
-    const assembled  = new Uint8Array(totalBytes);
-    let off = 0;
-    for (const chunk of _relayChunks) {
-      if (!chunk) continue;
-      assembled.set(chunk, off);
-      off += chunk.byteLength;
-    }
-    _relayChunks = null;
-
-    // Decompress if host sent compressed data
-    let finalBuf = assembled.buffer;
-    if (_relayMeta.compressed && typeof DecompressionStream !== 'undefined') {
-      $('prog-recv-label').textContent = 'Decompressing...';
-      try {
-        finalBuf = await decompressBuf(finalBuf);
-        console.log('[decompress] ' + (assembled.byteLength/1024/1024).toFixed(2) + 'MB -> '
-          + (finalBuf.byteLength/1024/1024).toFixed(2) + 'MB');
-      } catch(e) {
-        logError('Decompression error: ' + e.message, e.stack, 'relay decompress');
-        $('prog-recv-label').textContent = 'Decompression failed — please retry';
-        $('prog-recv-label').style.color = 'var(--red)';
-        _relayMeta = null;
-        return;
-      }
-    }
-
-    S.fileBuf  = finalBuf;
-    S.fileName = _relayMeta.name;
-    S.fileSize = finalBuf.byteLength;
 
     try {
-      const hash = await sha256hex(S.fileBuf.slice(0));
-      if (hash === _relayMeta.hash) {
-        S.fileHash = hash;
-        $('prog-recv-label').textContent   = '✓ Verified — SHA-256 match (relay)';
-        $('hash-badge-recv').style.display = 'inline-flex';
-        $('wait-sync-msg').style.display   = 'block';
-        S.socket.emit('file:ready', { hash });
-        toast('File received & verified ✓');
-      } else {
+      // Download with progress tracking via XHR
+      const rawBuf = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', '/transfer/download/' + token);
+        xhr.responseType = 'arraybuffer';
+
+        xhr.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = e.loaded / e.total;
+            $('prog-recv').style.width = (pct * 100).toFixed(1) + '%';
+            $('prog-recv-label').textContent =
+              (e.loaded / (1024*1024)).toFixed(2) + ' / ' + (e.total / (1024*1024)).toFixed(2) + ' MB';
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status === 200) resolve(xhr.response);
+          else reject(new Error('Download failed: ' + xhr.status));
+        };
+        xhr.onerror   = () => reject(new Error('Download network error'));
+        xhr.ontimeout = () => reject(new Error('Download timed out'));
+        xhr.timeout   = 10 * 60 * 1000;
+        xhr.send();
+      });
+
+      // Decompress if needed
+      let finalBuf = rawBuf;
+      if (compressed && typeof DecompressionStream !== 'undefined') {
+        $('prog-recv-label').textContent = 'Decompressing...';
+        finalBuf = await decompressBuf(rawBuf);
+      }
+
+      // Verify SHA-256
+      $('prog-recv-label').textContent = 'Verifying...';
+      const gotHash = await sha256hex(finalBuf.slice(0));
+      if (gotHash !== hash) {
         $('prog-recv-label').textContent = '✗ Hash mismatch — please retry';
         $('prog-recv-label').style.color = 'var(--red)';
-        toast('⚠ File integrity check failed');
+        toast('File integrity check failed');
+        return;
       }
+
+      S.fileBuf  = finalBuf;
+      S.fileName = name;
+      S.fileSize = finalBuf.byteLength;
+      S.fileHash = gotHash;
+
+      $('prog-recv-label').textContent   = '✓ Verified — SHA-256 match';
+      $('hash-badge-recv').style.display = 'inline-flex';
+      $('wait-sync-msg').style.display   = 'block';
+      S.socket.emit('file:ready', { hash: gotHash });
+      toast('File downloaded & verified ✓');
+
     } catch(e) {
-      $('prog-recv-label').textContent = '✗ Verify error: ' + e.message;
+      $('prog-recv-label').textContent = '✗ Error: ' + e.message;
       $('prog-recv-label').style.color = 'var(--red)';
-      logError('SHA-256 verify error: ' + e.message, e.stack, 'file:relay-done');
+      logError('HTTP download error: ' + e.message, e.stack, 'file:http-ready');
     }
-    _relayMeta = null;
   });
+
+  // file:relay-done removed — replaced by file:http-ready HTTP download
 
   S.socket.on('file:ready', ({ readyCount, allReady, listenerCount }) => {
     S.readyCount = readyCount;
