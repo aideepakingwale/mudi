@@ -2100,10 +2100,19 @@ function initSocket() {
         stopAudio();
         setTimeout(() => goScreen('home'), 2500);
       } else {
-        toast('Host disconnected — waiting to reconnect...');
+        // Temporary disconnect — reset partial relay so resend works cleanly
+        toast('Host disconnected — will resend file when reconnected');
         $('p2p-label').textContent = 'Waiting...';
         $('conn-badge').className = 'badge badge-wait';
         $('conn-badge').innerHTML = '<span class="dot dot-blink"></span>Reconnecting';
+        // Clear partial relay state — host will resend from the beginning
+        _relayChunks = null;
+        _relayMeta   = null;
+        // Reset receive UI to "waiting" state
+        $('recv-block').style.display    = 'none';
+        $('wait-file').style.display     = 'block';
+        $('prog-recv').style.width       = '0%';
+        $('prog-recv-label').textContent = 'Waiting for host to resend...';
       }
     }
   });
@@ -2383,12 +2392,12 @@ function initSocket() {
     setTimeout(() => goScreen('home'), 1500);
   });
 
-  S.socket.on('room:rejoined', ({ code, name, role, peerSid, masterSid, listenerCount, followerSids, hasFollower }) => {
+  S.socket.on('room:rejoined', ({ code, name, role, peerSid, masterSid, listenerCount, followerSids, hasFollower, fileHash, readyCount }) => {
     S.listenerCount = listenerCount || (followerSids ? followerSids.length : 0);
-    console.log('[room] rejoined successfully', code, role, 'hasFollower:', hasFollower, 'peerSid:', peerSid);
+    console.log('[room] rejoined', code, role, 'listeners:', S.listenerCount, 'serverFileHash:', fileHash);
     S.code = code; S.roomName = name; S.role = role;
+    S._transferInProgress = false; // reconnect clears any in-flight transfer state
     applyRole();
-    resetFileUI();  // always reset file UI on any rejoin
     saveSession({ code, roomName: name, role, hasPassword: S.hasPassword });
 
     if (role === 'master') {
@@ -2398,12 +2407,29 @@ function initSocket() {
       $('player-room-name').textContent  = name;
       setTimeout(() => genQR(code), 80);
 
-      if (followerSids && followerSids.length > 0) {
-        // Listeners already in room — go straight to room screen
+      const hasListeners  = followerSids && followerSids.length > 0;
+      const canAutoResend = S.fileBuf && S.fileHash && hasListeners;
+
+      if (canAutoResend) {
+        // We still have the file in memory and listeners are waiting
+        // Show the transfer UI and auto-resend immediately
+        console.log('[rejoin] file in memory — auto-resending to', followerSids.length, 'listener(s)');
+        $('file-chip').style.display      = 'none';
+        $('transfer-block').style.display = 'block';
+        $('send-fname').textContent       = S.fileName || 'Audio file';
+        $('send-fsize').textContent       = ((S.fileSize || 0) / (1024*1024)).toFixed(2) + ' MB';
+        $('prog-send').style.width        = '0%';
+        $('prog-send-label').textContent  = 'Reconnected — resending file...';
+        $('hash-badge-send').style.display = 'none';
+      } else {
+        // No file in memory or no listeners — clean slate
+        resetFileUI();
+      }
+
+      if (hasListeners) {
         followerSids.forEach((sid, i) => {
           S.peerSid = sid;
           $('peer-wait-card').style.display = 'none';
-          // Update connected state immediately
           updateConnBadge('connected');
           $('p2p-label').textContent = 'Room ✓';
           $('av-ring-you').classList.add('on');
@@ -2411,22 +2437,37 @@ function initSocket() {
           setTimeout(() => initPC(sid), 300 + i * 100);
         });
         goScreen('room');
-        toast('Rejoined — ' + followerSids.length + ' listener(s) in room');
+
+        if (canAutoResend) {
+          // Small delay to let the room UI settle, then resend
+          setTimeout(() => {
+            const fakeFile = { name: S.fileName, arrayBuffer: () => Promise.resolve(S.fileBuf) };
+            sendFile(fakeFile).catch(err => {
+              logError('Auto-resend error: ' + err.message, err.stack, 'room:rejoined');
+              toast('Resend failed — please re-select the file');
+              resetFileUI();
+            });
+          }, 800);
+          toast('Reconnected — resending file to ' + followerSids.length + ' listener(s)');
+        } else {
+          toast('Reconnected — ' + followerSids.length + ' listener(s) in room');
+        }
       } else {
         $('peer-wait-card').style.display = 'flex';
         goScreen('host');
         toast('Room restored — waiting for listeners');
       }
       updateListenerUI();
+
     } else {
       // Follower rejoined
       $('room-code-top').textContent = code;
       goScreen('room');
       if (peerSid) {
         S.peerSid = peerSid;
-        toast('Rejoined — waiting for host to reconnect...');
+        toast('Rejoined — host is reconnecting...');
       } else {
-        toast('Rejoined — host is not here yet');
+        toast('Rejoined — waiting for host');
       }
     }
   });
@@ -2450,15 +2491,21 @@ function initSocket() {
   S.socket.on('peer:rejoined', ({ role, peerSid, listenerCount }) => {
     console.log('[peer:rejoined] role:', role, 'peerSid:', peerSid);
     if (listenerCount !== undefined) { S.listenerCount = listenerCount; updateListenerUI(); }
-    toast((role === 'master' ? 'Host' : 'Listener') + ' reconnected');
+
     if (peerSid) {
       S.peerSid = peerSid;
       if (S.role === 'master') {
         setTimeout(() => initPC(peerSid), 200);
+        toast('Listener reconnected');
+      } else if (role === 'master') {
+        // Host reconnected — show connected and wait for file resend
+        updateConnBadge('connected');
+        $('p2p-label').textContent = 'Room ✓';
+        teardownPC(peerSid); // clear stale P2P state
+        toast('Host reconnected — file incoming...');
+        // The progress UI was reset by peer:left — it's ready for the resend
       } else {
-        teardownPC(peerSid);
-        $('p2p-label').textContent = 'Connecting...';
-        updateConnBadge('connecting');
+        toast('Listener reconnected');
       }
     }
     $('av-ring-peer').classList.add('on');

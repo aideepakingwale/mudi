@@ -423,7 +423,9 @@ function startServer() {
           code: c, name: room.name, role: 'master',
           listenerCount: room.followers.size,
           followerSids: [...room.followers.keys()],
-          hasFollower: room.followers.size > 0,
+          hasFollower:   room.followers.size > 0,
+          fileHash:      room.fileHash || null,     // was a file being transferred?
+          readyCount:    room.readySet.size,
         });
         for (const [sid] of room.followers)
           io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id });
