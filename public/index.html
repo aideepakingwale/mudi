@@ -665,7 +665,8 @@ const STUN_SERVERS = [
     credential: 'openrelayproject',
   },
 ];
-const CHUNK_SIZE     = 16384;   // 16 KB DataChannel chunk
+const CHUNK_SIZE     = 16384;   // 16 KB per chunk
+const RELAY_CHUNK    = 65536;   // 64 KB chunks for socket.io relay (base64 encoded)
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
 const SEEK_INTERVAL  = 250;     // UI seek update
@@ -1163,54 +1164,97 @@ async function sendFile(file) {
   S.fileBuf  = buf; S.fileHash = hash;
   S.fileName = file.name; S.fileSize = buf.byteLength;
 
-  // Announce via socket (followers see filename immediately)
+  // Announce via socket so listeners show filename immediately
   S.socket.emit('file:meta', { name: file.name, size: buf.byteLength, hash });
 
-  // Collect all open DataChannels from S.peers (master uses peers map, not legacy S.dc)
   const openDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
-  if (openDCs.length === 0) {
-    // No open DCs yet — queue and retry when one opens
-    S.pendingFile = file;
-    $('prog-send-label').textContent = 'Waiting for P2P connection...';
-    toast('File ready — waiting for P2P to establish');
-    return;
-  }
-  console.log('[DC] sending to', openDCs.length, 'listener(s):', file.name, buf.byteLength, 'bytes');
 
-  // Send meta frame to each DC
-  const metaStr = JSON.stringify({ type: 'meta', name: file.name, size: buf.byteLength, hash });
+  if (openDCs.length > 0) {
+    console.log('[transfer] WebRTC P2P path — open DCs:', openDCs.length);
+    await sendViaWebRTC(buf, file.name, hash, openDCs);
+  } else {
+    // No open DataChannel — use Socket.IO relay immediately (works over any network)
+    console.log('[transfer] Socket.IO relay path — no open P2P channels');
+    toast('P2P unavailable — sending via server relay');
+    await sendViaRelay(buf, file.name, hash);
+  }
+}
+
+async function sendViaWebRTC(buf, name, hash, openDCs) {
+  const metaStr = JSON.stringify({ type: 'meta', name, size: buf.byteLength, hash });
   for (const dc of openDCs) dc.send(metaStr);
   await new Promise(r => setTimeout(r, 0));
 
-  // Stream chunks to all DCs with flow control
   let offset = 0;
   const BUFFER_HIGH = 256 * 1024;
   const BUFFER_LOW  = 64  * 1024;
   for (const dc of openDCs) dc.bufferedAmountLowThreshold = BUFFER_LOW;
 
-  function pump() {
-    const currentDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
-    while (offset < buf.byteLength) {
-      const maxBuf = Math.max(...currentDCs.map(dc => dc.bufferedAmount), 0);
-      if (maxBuf > BUFFER_HIGH) {
-        // Pause until the slowest DC drains
-        const slowDC = currentDCs.find(dc => dc.bufferedAmount > BUFFER_HIGH);
-        if (slowDC) { slowDC.onbufferedamountlow = () => { slowDC.onbufferedamountlow = null; pump(); }; }
+  await new Promise((resolve) => {
+    function pump() {
+      const dcs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
+      if (dcs.length === 0) {
+        // All DCs closed mid-transfer — fall back to relay for remaining data
+        console.warn('[transfer] P2P closed mid-transfer — switching to relay');
+        sendViaRelay(buf, name, hash, offset);
+        resolve();
         return;
       }
-      const end   = Math.min(offset + CHUNK_SIZE, buf.byteLength);
-      const chunk = new Uint8Array(buf, offset, end - offset);
-      for (const dc of currentDCs) dc.send(chunk);
-      offset = end;
-      const pct = offset / buf.byteLength;
-      $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
-      $('prog-send-label').textContent =
-        (offset / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB';
+      while (offset < buf.byteLength) {
+        const maxBuf = Math.max(...dcs.map(dc => dc.bufferedAmount), 0);
+        if (maxBuf > BUFFER_HIGH) {
+          const slowDC = dcs.find(dc => dc.bufferedAmount > BUFFER_HIGH);
+          if (slowDC) {
+            slowDC.onbufferedamountlow = () => { slowDC.onbufferedamountlow = null; pump(); };
+          }
+          return;
+        }
+        const end   = Math.min(offset + CHUNK_SIZE, buf.byteLength);
+        const chunk = new Uint8Array(buf, offset, end - offset);
+        for (const dc of dcs) { try { dc.send(chunk); } catch(e) {} }
+        offset = end;
+        const pct = offset / buf.byteLength;
+        $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
+        $('prog-send-label').textContent =
+          (offset / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB';
+      }
+      $('prog-send-label').textContent = '✓ Sent — waiting for listeners to verify';
+      $('hash-badge-send').style.display = 'inline-flex';
+      resolve();
     }
-    $('prog-send-label').textContent = '✓ Sent to all — waiting for listeners to verify';
-    $('hash-badge-send').style.display = 'inline-flex';
+    pump();
+  });
+}
+
+async function sendViaRelay(buf, name, hash, startOffset = 0) {
+  // Chunked transfer via Socket.IO — works through any NAT/firewall
+  const total  = Math.ceil(buf.byteLength / RELAY_CHUNK);
+  const startSeq = Math.floor(startOffset / RELAY_CHUNK);
+
+  S.socket.emit('file:relay-start', { name, size: buf.byteLength, hash, total });
+  await new Promise(r => setTimeout(r, 50));
+
+  for (let seq = startSeq; seq < total; seq++) {
+    const start  = seq * RELAY_CHUNK;
+    const end    = Math.min(start + RELAY_CHUNK, buf.byteLength);
+    const chunk  = new Uint8Array(buf, start, end - start);
+
+    // Convert to base64 for Socket.IO transport (binary blobs can get corrupted)
+    const b64 = btoa(String.fromCharCode(...chunk));
+    S.socket.emit('file:relay-chunk', { seq, data: b64, total });
+
+    const pct = (end / buf.byteLength);
+    $('prog-send').style.width     = (pct * 100).toFixed(1) + '%';
+    $('prog-send-label').textContent =
+      (end / 1024 / 1024).toFixed(2) + ' / ' + (buf.byteLength / 1024 / 1024).toFixed(2) + ' MB (relay)';
+
+    // Yield every 4 chunks to keep the event loop responsive
+    if (seq % 4 === 3) await new Promise(r => setTimeout(r, 0));
   }
-  pump();
+
+  S.socket.emit('file:relay-done');
+  $('prog-send-label').textContent = '✓ Sent via relay — waiting for listeners to verify';
+  $('hash-badge-send').style.display = 'inline-flex';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1452,8 +1496,8 @@ function onFileSelect(e) {
   } else {
     // Queue: will send as soon as DataChannel opens
     S.pendingFile = file;
-    $('prog-send-label').textContent = 'Waiting for listener to connect...';
-    toast('File selected — waiting for listener to join');
+    $('prog-send-label').textContent = 'Waiting for listener to join...';
+    toast('File queued — share your room link to invite listeners');
   }
 }
 
@@ -1822,11 +1866,82 @@ function initSocket() {
   });
   S.socket.on('rtc:ice', async ({ from, candidate }) => { await addICE(candidate, from); });
 
-  /* File */
+  /* File via WebRTC (bytes come via DataChannel) */
   S.socket.on('file:meta', ({ name, size }) => {
-    // Follower sees name/size via socket; bytes come via DataChannel
     $('recv-fname').textContent = name;
     $('recv-fsize').textContent = (size/1024/1024).toFixed(2)+' MB';
+  });
+
+  /* File via Socket.IO relay (internet fallback) */
+  let _relayChunks = null;
+  let _relayMeta   = null;
+
+  S.socket.on('file:relay-start', ({ name, size, hash, total }) => {
+    console.log('[relay] start receiving:', name, size, 'bytes,', total, 'chunks');
+    _relayMeta   = { name, size, hash, total };
+    _relayChunks = new Array(total);
+    $('wait-file').style.display     = 'none';
+    $('recv-block').style.display    = 'block';
+    $('recv-fname').textContent      = name;
+    $('recv-fsize').textContent      = (size/1024/1024).toFixed(2) + ' MB';
+    $('prog-recv-label').textContent = 'Receiving via relay...';
+    $('prog-recv').style.width       = '0%';
+    $('prog-recv-label').style.color = '';
+  });
+
+  S.socket.on('file:relay-chunk', ({ seq, data, total }) => {
+    if (!_relayChunks || !_relayMeta) return;
+    // Decode base64 back to Uint8Array
+    const bin = atob(data);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    _relayChunks[seq] = arr;
+
+    const received = _relayChunks.filter(Boolean).length;
+    const pct = received / total;
+    $('prog-recv').style.width       = (pct * 100).toFixed(1) + '%';
+    $('prog-recv-label').textContent = (received / total * _relayMeta.size / 1024 / 1024).toFixed(2)
+      + ' / ' + (_relayMeta.size / 1024 / 1024).toFixed(2) + ' MB';
+  });
+
+  S.socket.on('file:relay-done', async () => {
+    if (!_relayChunks || !_relayMeta) return;
+    console.log('[relay] all chunks received — assembling');
+    $('prog-recv-label').textContent = 'Verifying SHA-256...';
+
+    // Assemble all chunks
+    const assembled = new Uint8Array(_relayMeta.size);
+    let off = 0;
+    for (const chunk of _relayChunks) {
+      if (!chunk) continue;
+      assembled.set(chunk, off);
+      off += chunk.byteLength;
+    }
+
+    S.fileBuf  = assembled.buffer;
+    S.fileName = _relayMeta.name;
+    S.fileSize = _relayMeta.size;
+    _relayChunks = null;
+
+    try {
+      const hash = await sha256hex(S.fileBuf.slice(0));
+      if (hash === _relayMeta.hash) {
+        S.fileHash = hash;
+        $('prog-recv-label').textContent   = '✓ Verified — SHA-256 match (relay)';
+        $('hash-badge-recv').style.display = 'inline-flex';
+        $('wait-sync-msg').style.display   = 'block';
+        S.socket.emit('file:ready', { hash });
+        toast('File received & verified (relay)');
+      } else {
+        $('prog-recv-label').textContent = '✗ Hash mismatch — please retry';
+        $('prog-recv-label').style.color = 'var(--red)';
+        toast('⚠ File integrity check failed');
+      }
+    } catch(e) {
+      $('prog-recv-label').textContent = '✗ Verify error: ' + e.message;
+      $('prog-recv-label').style.color = 'var(--red)';
+    }
+    _relayMeta = null;
   });
 
   S.socket.on('file:ready', ({ readyCount, allReady, listenerCount }) => {
