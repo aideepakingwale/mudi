@@ -70,6 +70,29 @@ function startServer() {
     facebook: !!process.env.FACEBOOK_APP_ID    && !!process.env.FACEBOOK_APP_SECRET,
   }));
 
+
+  // ICE server config — client fetches this so TURN creds stay in env vars
+  app.get('/config', (_req, res) => {
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // Open Relay free TURN (metered.ca) — works globally, no auth needed
+      { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject', transport: 'tcp' },
+    ];
+
+    // Override with env vars if provided (bring-your-own TURN)
+    if (process.env.TURN_URL && process.env.TURN_USER && process.env.TURN_PASS) {
+      iceServers.push(
+        { urls: process.env.TURN_URL,                        username: process.env.TURN_USER, credential: process.env.TURN_PASS },
+        { urls: process.env.TURN_URL.replace(':3478', ':443'), username: process.env.TURN_USER, credential: process.env.TURN_PASS },
+      );
+    }
+
+    res.json({ iceServers });
+  });
+
   // ── Legal pages (public — Facebook requires live /privacy URL) ───────────
   app.get('/privacy', (_req, res) =>
     res.sendFile(path.join(__dirname, 'public', 'privacy.html'))

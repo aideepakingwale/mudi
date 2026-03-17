@@ -634,8 +634,37 @@ function togglePwVis(inputId, btn) {
 /* ═══════════════════════════════════════════════════════════
    CONFIG
 ═══════════════════════════════════════════════════════════ */
-const STUN_SERVERS   = [{ urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }];
+// ICE servers — STUN for direct P2P (works on LAN), TURN for internet relay
+// When both devices are behind NAT (home router, mobile), STUN alone fails.
+// TURN relays the data through a server — slower but works everywhere.
+// Open Relay = free public TURN servers maintained by metered.ca
+const STUN_SERVERS = [
+  // Google STUN — fast discovery, works on LAN and open NAT
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  // Open Relay TURN — required for internet use behind symmetric NAT
+  // Covers UDP, TCP, and TLS — ensures connection through firewalls
+  {
+    urls:       'turn:openrelay.metered.ca:80',
+    username:   'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls:       'turn:openrelay.metered.ca:443',
+    username:   'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls:       'turn:openrelay.metered.ca:443?transport=tcp',
+    username:   'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls:       'turns:openrelay.metered.ca:443',  // TURN over TLS — works through strict firewalls
+    username:   'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
 const CHUNK_SIZE     = 16384;   // 16 KB DataChannel chunk
 const NTP_INTERVAL   = 15000;   // re-probe NTP every 15s (5s caused false disconnects during transfer)
 const DRIFT_INTERVAL = 2000;    // check drift every 2s
@@ -907,7 +936,25 @@ async function initPC(targetSid) {
   if (S.role !== 'master') { S.pc = pc; S.remoteDescSet = false; S.pendingICE = peer.pendingICE; }
 
   pc.onicecandidate = ({ candidate }) => {
-    if (candidate) S.socket.emit('rtc:ice', { to: sid, candidate });
+    if (candidate) {
+      console.log('[ICE] candidate type:', candidate.type, candidate.protocol, candidate.address?.split('.').slice(0,2).join('.') + '...');
+      S.socket.emit('rtc:ice', { to: sid, candidate });
+    } else {
+      console.log('[ICE] gathering complete');
+    }
+  };
+
+  pc.onicecandidateerror = (e) => {
+    // 701 = TURN server unreachable — only warn, don't crash
+    if (e.errorCode !== 701) console.warn('[ICE] candidate error:', e.errorCode, e.errorText);
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log('[ICE] connection state:', pc.iceConnectionState);
+    if (pc.iceConnectionState === 'failed') {
+      console.error('[ICE] FAILED — no route found. If over internet, TURN relay may be needed.');
+      toast('⚠ Connection failed — check both devices are online');
+    }
   };
 
   pc.onconnectionstatechange = () => {
@@ -924,6 +971,18 @@ async function initPC(targetSid) {
     if (st === 'connected' && S.role === 'master') {
       const total = S.listenerCount;
       toast('Listener connected (' + connectedCount + '/' + total + ') — you can now share a file');
+    }
+    if (st === 'failed') {
+      console.error('[WebRTC] connection FAILED to', sid.slice(0,8));
+      updateConnBadge('failed');
+      toast('⚠ P2P failed — retrying via relay...');
+      // Auto-retry once — second attempt will use TURN relay via trickle ICE
+      setTimeout(() => {
+        if (S.peers.get(sid)?.pc.connectionState === 'failed' && S.role === 'master') {
+          console.log('[WebRTC] retrying connection to', sid.slice(0,8));
+          initPC(sid);
+        }
+      }, 1500);
     }
   };
 
