@@ -186,6 +186,65 @@ input[type=range].seek:disabled{opacity:.4;cursor:default;}
   text-align:center;word-break:break-word;opacity:0;transition:all .3s;z-index:200;pointer-events:none;
 }
 .toast.on{opacity:1;transform:translateY(0);}
+.toast.error-toast{
+  background:rgba(226,75,74,.12);border-color:rgba(226,75,74,.4);
+  color:var(--red);text-align:left;pointer-events:auto;cursor:pointer;
+}
+/* Error panel — full stacktrace overlay */
+#err-panel{
+  display:none;position:fixed;inset:0;z-index:9999;
+  background:rgba(9,9,26,.96);backdrop-filter:blur(6px);
+  flex-direction:column;overflow:hidden;
+}
+#err-panel.show{display:flex;}
+#err-panel-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;background:rgba(226,75,74,.12);border-bottom:1px solid rgba(226,75,74,.3);
+  flex-shrink:0;
+}
+#err-panel-title{
+  font-family:var(--fd);font-weight:700;font-size:14px;
+  color:var(--red);letter-spacing:.04em;
+}
+#err-panel-btns{display:flex;gap:8px;}
+.err-btn{
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;
+  color:var(--white);font-family:var(--fm);font-size:11px;
+  padding:6px 12px;cursor:pointer;transition:all .18s;
+}
+.err-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+.err-btn.red{border-color:rgba(226,75,74,.4);color:var(--red);}
+.err-btn.red:hover{background:rgba(226,75,74,.1);}
+#err-panel-body{
+  flex:1;overflow-y:auto;padding:16px;
+  display:flex;flex-direction:column;gap:12px;
+}
+.err-entry{
+  background:var(--surf);border:1px solid rgba(226,75,74,.25);
+  border-radius:12px;overflow:hidden;
+}
+.err-entry-head{
+  background:rgba(226,75,74,.08);padding:10px 14px;
+  display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+}
+.err-entry-msg{
+  font-size:13px;color:var(--red);font-weight:500;
+  word-break:break-all;flex:1;
+}
+.err-entry-time{font-size:9px;color:var(--muted);flex-shrink:0;margin-top:2px;}
+.err-stack{
+  padding:12px 14px;font-family:'Space Mono',monospace;font-size:10px;
+  color:#9090b0;line-height:1.7;white-space:pre-wrap;word-break:break-all;
+  border-top:1px solid rgba(226,75,74,.15);
+  max-height:240px;overflow-y:auto;
+}
+.err-empty{text-align:center;color:var(--muted);font-size:12px;padding:40px;}
+#err-badge{
+  display:none;position:fixed;bottom:calc(72px + var(--sab));right:16px;
+  background:var(--red);color:#fff;border:none;border-radius:999px;
+  padding:6px 12px;font-family:var(--fm);font-size:11px;cursor:pointer;
+  z-index:300;box-shadow:0 2px 12px rgba(226,75,74,.4);
+}
 /* Reconnect banner */
 #reconnect-banner{
   display:none;position:fixed;top:calc(var(--sat) + 2px);left:var(--sp);right:var(--sp);
@@ -230,6 +289,23 @@ select,input,button,textarea{font-family:inherit;}
 <div id="app">
 
 <div class="toast" id="toast"></div>
+
+<!-- Error panel — shows full stacktraces, stays until dismissed -->
+<div id="err-panel">
+  <div id="err-panel-bar">
+    <span id="err-panel-title">⚠ Errors <span id="err-count" style="opacity:.7;font-size:11px;"></span></span>
+    <div id="err-panel-btns">
+      <button class="err-btn" onclick="copyAllErrors()">Copy All</button>
+      <button class="err-btn" onclick="clearErrors()">Clear</button>
+      <button class="err-btn red" onclick="closeErrPanel()">✕ Close</button>
+    </div>
+  </div>
+  <div id="err-panel-body">
+    <div class="err-empty" id="err-empty">No errors recorded</div>
+  </div>
+</div>
+<!-- Badge: tap to reopen error panel -->
+<button id="err-badge" onclick="openErrPanel()">⚠ <span id="err-badge-count">0</span> error(s)</button>
 
 <!-- Reconnect banner (shown on network drop) -->
 <div id="reconnect-banner">
@@ -510,7 +586,8 @@ select,input,button,textarea{font-family:inherit;}
   <!-- FOLLOWER: receive section -->
   <div class="follower-only" id="file-section-follower" style="display:flex;flex-direction:column;gap:10px;">
     <div id="wait-file" class="card card-sm" style="text-align:center;color:var(--muted);font-size:clamp(10px,2.8vw,12px);padding:clamp(14px,4vw,18px);">
-      <span class="dots-anim">Waiting for host to share a file</span>
+      <div style="margin-bottom:6px;">🎵 Ready to receive</div>
+      <div class="dots-anim" style="font-size:clamp(9px,2.4vw,10px);">Waiting for host to select and share an audio file</div>
     </div>
     <div id="recv-block" style="display:none;">
       <div class="lbl">Receiving</div>
@@ -698,7 +775,8 @@ const S = {
   pc             : null,
   dc             : null,
   pendingICE     : [],
-  pendingFile    : null,    // file selected before P2P was ready
+  pendingFile        : null,    // file selected before P2P was ready
+  _transferInProgress: false,   // prevents double-send
   remoteDescSet  : false,
   // File (master)
   fileRaw    : null,    // original File object
@@ -803,10 +881,119 @@ function sha256js(data) {
 let _toastTmr;
 function toast(msg, dur=3000) {
   const t = $('toast');
-  t.textContent = msg; t.classList.add('on');
+  const isErr = msg.includes('⚠') || msg.includes('✗') || msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed');
+  t.textContent = msg;
+  t.className   = 'toast on' + (isErr ? ' error-toast' : '');
   clearTimeout(_toastTmr);
-  _toastTmr = setTimeout(() => t.classList.remove('on'), dur);
+  // Errors stay 8s; if it's an error make it clickable to open panel
+  const d = isErr ? Math.max(dur, 8000) : dur;
+  if (isErr) {
+    t.onclick = openErrPanel;
+    logError(msg, null, '[toast]');
+  } else {
+    t.onclick = null;
+  }
+  _toastTmr = setTimeout(() => t.classList.remove('on'), d);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ERROR PANEL — persistent, copyable, full stacktrace
+═══════════════════════════════════════════════════════════ */
+const _errors = [];
+
+function logError(message, stack, source) {
+  const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  const entry = { message: String(message), stack: stack || '', source: source || '', time: ts };
+  _errors.push(entry);
+
+  // Update badge
+  const badge = $('err-badge');
+  const bc    = $('err-badge-count');
+  if (badge) { badge.style.display = 'block'; }
+  if (bc)    { bc.textContent = _errors.length; }
+
+  // Update counter in panel
+  const ec = $('err-count');
+  if (ec) ec.textContent = '(' + _errors.length + ')';
+
+  // Add entry to panel body
+  const body  = $('err-panel-body');
+  const empty = $('err-empty');
+  if (empty) empty.style.display = 'none';
+
+  if (body) {
+    const el = document.createElement('div');
+    el.className = 'err-entry';
+    el.innerHTML =
+      '<div class="err-entry-head">' +
+        '<div class="err-entry-msg">' + escHtml(entry.message) + '</div>' +
+        '<div class="err-entry-time">' + ts + (entry.source ? '<br>' + escHtml(entry.source) : '') + '</div>' +
+      '</div>' +
+      (entry.stack ? '<pre class="err-stack">' + escHtml(entry.stack) + '</pre>' : '');
+    body.appendChild(el);
+  }
+
+  console.error('[MuDi Error]', message, stack || '');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function openErrPanel()  { $('err-panel').classList.add('show'); }
+function closeErrPanel() { $('err-panel').classList.remove('show'); }
+
+function copyAllErrors() {
+  const lines = [];
+  _errors.forEach((e, i) => {
+    lines.push('=== Error ' + (i+1) + ' [' + e.time + '] ===');
+    if (e.source) lines.push('Source: ' + e.source);
+    lines.push('Message: ' + e.message);
+    if (e.stack) lines.push('Stack:', e.stack);
+    lines.push('');
+  });
+  const text = lines.join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('#err-panel-btns .err-btn');
+    if (btn) { const o = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = o, 1500); }
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
+function clearErrors() {
+  _errors.length = 0;
+  const body  = $('err-panel-body');
+  const empty = $('err-empty');
+  if (body) {
+    // Remove all error entries, keep the empty message
+    [...body.querySelectorAll('.err-entry')].forEach(el => el.remove());
+  }
+  if (empty) empty.style.display = '';
+  const badge = $('err-badge');
+  const bc    = $('err-badge-count');
+  if (badge) badge.style.display = 'none';
+  if (bc)    bc.textContent = '0';
+  const ec = $('err-count');
+  if (ec) ec.textContent = '';
+}
+
+/* ── Global error catchers ─────────────────────────────────────────────── */
+window.onerror = function(message, source, lineno, colno, error) {
+  const stack = error?.stack || ('at ' + source + ':' + lineno + ':' + colno);
+  logError(message, stack, source);
+  return false; // don't suppress
+};
+
+window.addEventListener('unhandledrejection', e => {
+  const msg   = e.reason?.message || String(e.reason) || 'Unhandled Promise rejection';
+  const stack = e.reason?.stack   || '';
+  logError(msg, stack, 'Promise');
+});
 
 /* ═══════════════════════════════════════════════════════════
    SCREEN NAVIGATION
@@ -1053,16 +1240,21 @@ function setupDC(dc) {
   let chunks=[], rxBytes=0, meta=null;
 
   dc.onopen = () => {
-    console.log('[DC] open');
+    console.log('[DC] P2P DataChannel open');
     $('r-transport').textContent = 'P2P';
-    // If host already picked a file before P2P was ready, send it now
+    $('p2p-label').textContent   = S.role === 'master'
+      ? ([...S.peers.values()].filter(p => p.pc?.connectionState === 'connected').length) + ' P2P'
+      : 'P2P';
+    // pendingFile is normally already sent via relay when listener joined,
+    // but if P2P happened to open first (LAN), send via P2P instead
     if (S.role === 'master' && S.pendingFile) {
       const f = S.pendingFile;
       S.pendingFile = null;
-      $('prog-send-label').textContent = 'Sending...';
+      console.log('[DC] P2P opened first — sending via P2P');
+      $('prog-send-label').textContent = 'Sending via P2P...';
       sendFile(f).catch(err => {
+        logError('Transfer error: ' + err.message, err.stack, 'DC.onopen');
         toast('Transfer error: ' + err.message);
-        console.error('[sendFile]', err);
       });
     }
   };
@@ -1152,9 +1344,20 @@ function setupDC(dc) {
 }
 
 async function sendFile(file) {
+  if (S._transferInProgress) {
+    console.warn('[sendFile] transfer already in progress — skipping');
+    return;
+  }
+  S._transferInProgress = true;
   $('prog-send-label').textContent = 'Computing SHA-256...';
-  const buf  = await file.arrayBuffer();
-  const hash = await sha256hex(buf.slice(0));
+  let buf, hash;
+  try {
+    buf  = await file.arrayBuffer();
+    hash = await sha256hex(buf.slice(0));
+  } catch(e) {
+    S._transferInProgress = false;
+    throw e;
+  }
 
   S.fileBuf  = buf; S.fileHash = hash;
   S.fileName = file.name; S.fileSize = buf.byteLength;
@@ -1164,14 +1367,16 @@ async function sendFile(file) {
 
   const openDCs = [...S.peers.values()].map(p => p.dc).filter(dc => dc && dc.readyState === 'open');
 
-  if (openDCs.length > 0) {
-    console.log('[transfer] WebRTC P2P path — open DCs:', openDCs.length);
-    await sendViaWebRTC(buf, file.name, hash, openDCs);
-  } else {
-    // No open DataChannel — use Socket.IO relay immediately (works over any network)
-    console.log('[transfer] using relay (no P2P — normal for internet connections)');
-    // No toast — relay is a normal path, not an error
-    await sendViaRelay(buf, file.name, hash);
+  try {
+    if (openDCs.length > 0) {
+      console.log('[transfer] P2P path — open DCs:', openDCs.length);
+      await sendViaWebRTC(buf, file.name, hash, openDCs);
+    } else {
+      console.log('[transfer] relay path — no open P2P DCs (normal for internet)');
+      await sendViaRelay(buf, file.name, hash);
+    }
+  } finally {
+    S._transferInProgress = false;
   }
 }
 
@@ -1472,24 +1677,24 @@ function onFileSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  // Show file info immediately — regardless of P2P state
   $('file-chip').style.display      = 'none';
   $('transfer-block').style.display = 'block';
   $('send-fname').textContent       = file.name;
   $('send-fsize').textContent       = (file.size/1024/1024).toFixed(2)+' MB';
   $('prog-send-label').textContent  = 'Reading file...';
-  e.target.value = '';  // allow re-selecting same file
+  e.target.value = '';
 
-  // Check if any DataChannels are open (master uses S.peers map, not legacy S.dc)
+  const listenerPresent = S.listenerCount > 0;
   const openDCCount = [...S.peers.values()].filter(p => p.dc && p.dc.readyState === 'open').length;
 
-  if (openDCCount > 0) {
+  if (listenerPresent || openDCCount > 0) {
+    // Listener is in the room — start transfer immediately (relay or P2P)
     sendFile(file).catch(err => {
+      logError('Transfer error: ' + err.message, err.stack, 'onFileSelect');
       toast('Transfer error: ' + err.message);
-      console.error('[sendFile]', err);
     });
   } else {
-    // Queue: will send as soon as DataChannel opens
+    // No listener yet — queue until one joins
     S.pendingFile = file;
     $('prog-send-label').textContent = 'Waiting for listener to join...';
     toast('File queued — share your room link to invite listeners');
@@ -1803,11 +2008,18 @@ function initSocket() {
     S.listenerCount = listenerCount || 1;
     S.maxListeners  = maxListeners  || 10;
     $('room-code-top').textContent = code;
+    S.role = 'follower';     // ensure role is set before applyRole
     applyRole();
     goScreen('room');
     updateListenerUI();
+
+    // Show connected state immediately on listener side
+    updateConnBadge('connected');
+    $('p2p-label').textContent = 'Room ✓';
+    $('av-ring-you').classList.add('on');
+
     saveSession({ code, roomName: name, role: 'follower' });
-    toast('Joined "' + (name || code) + '" (' + listenerCount + '/' + maxListeners + ')');
+    toast('Joined "' + (name || code) + '" — waiting for host to share a file');
   });
 
   S.socket.on('peer:joined', ({ peerSid, listenerCount }) => {
@@ -1815,8 +2027,11 @@ function initSocket() {
     S.listenerCount = listenerCount || 1;
     $('peer-wait-card').style.display = 'none';
     updateListenerUI();
-    if (curScreen === 'host') goScreen('room');
-    resetFileUI();
+    // Always navigate — goScreen() is a no-op if already on 'room'
+    // The conditional was causing the host to stay stuck on s-host when
+    // peer:joined fired while the host had briefly reconnected
+    if (curScreen === 'host' || curScreen === 'create') goScreen('room');
+    // NOTE: NOT resetting file UI — a pending file may be selected
 
     // Show "Connected" immediately — socket room connection is established
     // WebRTC P2P will be attempted in parallel but is optional (relay works without it)
@@ -1825,9 +2040,23 @@ function initSocket() {
     $('av-ring-you').classList.add('on');
     $('av-ring-peer').classList.add('on');
 
-    // Attempt WebRTC P2P silently in the background (improves speed if it works)
+    // Attempt WebRTC P2P silently in background (faster if on same network)
     initPC(peerSid);
-    toast('Listener ' + listenerCount + ' joined — ready to share files');
+
+    // KEY FIX: if host already selected a file, send it NOW via relay
+    // Don't wait for P2P DataChannel — it never opens over internet NAT
+    if (S.pendingFile) {
+      const f = S.pendingFile;
+      S.pendingFile = null;
+      console.log('[transfer] listener joined — flushing pending file via relay');
+      $('prog-send-label').textContent = 'Sending...';
+      sendFile(f).catch(err => {
+        logError('Transfer error: ' + err.message, err.stack, 'peer:joined flush');
+        toast('Transfer error: ' + err.message);
+      });
+    } else {
+      toast('Listener ' + listenerCount + ' joined — select a file to share');
+    }
   });
 
   S.socket.on('peer:left', ({ role, peerSid, permanent, listenerCount }) => {
@@ -1949,6 +2178,7 @@ function initSocket() {
     } catch(e) {
       $('prog-recv-label').textContent = '✗ Verify error: ' + e.message;
       $('prog-recv-label').style.color = 'var(--red)';
+      logError('SHA-256 verify error: ' + e.message, e.stack, 'file:relay-done');
     }
     _relayMeta = null;
   });
@@ -2116,14 +2346,19 @@ function initSocket() {
       setTimeout(() => genQR(code), 80);
 
       if (followerSids && followerSids.length > 0) {
-        // Re-establish WebRTC to each existing follower
+        // Listeners already in room — go straight to room screen
         followerSids.forEach((sid, i) => {
           S.peerSid = sid;
           $('peer-wait-card').style.display = 'none';
+          // Update connected state immediately
+          updateConnBadge('connected');
+          $('p2p-label').textContent = 'Room ✓';
+          $('av-ring-you').classList.add('on');
+          $('av-ring-peer').classList.add('on');
           setTimeout(() => initPC(sid), 300 + i * 100);
         });
         goScreen('room');
-        toast('Rejoined — re-establishing to ' + followerSids.length + ' listener(s)...');
+        toast('Rejoined — ' + followerSids.length + ' listener(s) in room');
       } else {
         $('peer-wait-card').style.display = 'flex';
         goScreen('host');
@@ -2146,6 +2381,14 @@ function initSocket() {
   S.socket.on('room:state', ({ listenerCount, allReady, readyCount }) => {
     S.listenerCount = listenerCount;
     updateListenerUI();
+
+    // Belt-and-suspenders: if host is stuck on the waiting screen but
+    // a listener is now in the room, navigate to the room screen
+    if (S.role === 'master' && listenerCount > 0 && curScreen === 'host') {
+      console.log('[nav] room:state triggered host navigation — listenerCount:', listenerCount);
+      goScreen('room');
+    }
+
     if (allReady && S.role === 'master') {
       $('sync-play-btn').style.display = 'flex';
     }

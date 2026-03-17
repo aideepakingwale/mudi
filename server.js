@@ -246,9 +246,12 @@ function startServer() {
         yourName: userName,
       });
 
-      if (room.masterSid)
+      if (room.masterSid) {
+        // Master is connected — notify immediately
         io.to(room.masterSid).emit('peer:joined', { peerSid: socket.id, listenerCount: room.followers.size });
-
+      }
+      // Always broadcast room:state — master receives this and can navigate
+      // even if peer:joined was missed (e.g. master was mid-reconnect)
       io.to(c).emit('room:state', snapshot(room));
     });
 
@@ -420,6 +423,7 @@ function startServer() {
           code: c, name: room.name, role: 'master',
           listenerCount: room.followers.size,
           followerSids: [...room.followers.keys()],
+          hasFollower: room.followers.size > 0,
         });
         for (const [sid] of room.followers)
           io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id });
