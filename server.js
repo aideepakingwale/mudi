@@ -41,8 +41,16 @@ function startServer() {
   app.set('trust proxy', 1);
 
   // ── Body parsers ─────────────────────────────────────────────────────────
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  // Apply JSON/form parsers to everything EXCEPT /transfer/upload
+  // (upload needs raw body — express.json() 100KB limit kills large files)
+  app.use((req, res, next) => {
+    if (req.path === '/transfer/upload') return next(); // skip body parsers
+    express.json()(req, res, next);
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/transfer/upload') return next();
+    express.urlencoded({ extended: true })(req, res, next);
+  });
 
   // ── Session ───────────────────────────────────────────────────────────────
   const sessionMiddleware = session({
@@ -114,12 +122,12 @@ function startServer() {
     }
   }, 5 * 60 * 1000);
 
-  // Host uploads file — returns a transfer token
+  // Host uploads file — raw streaming, no body parser interference
   app.post('/transfer/upload', requireAuth, (req, res) => {
-    const roomCode = req.query.room;
-    const fileName = req.query.name || 'audio';
-    const fileHash = req.query.hash || '';
-    const fileSize = parseInt(req.query.size || '0', 10);
+    const roomCode   = req.query.room;
+    const fileName   = decodeURIComponent(req.query.name || 'audio');
+    const fileHash   = req.query.hash || '';
+    const fileSize   = parseInt(req.query.size || '0', 10);
     const compressed = req.query.compressed === '1';
 
     if (!roomCode) return res.status(400).json({ error: 'Missing room code' });
@@ -130,6 +138,10 @@ function startServer() {
     req.on('data', chunk => {
       chunks.push(chunk);
       received += chunk.length;
+      // Log progress for large files
+      if (fileSize > 0 && received % (1024 * 1024) < chunk.length) {
+        console.log(`[upload] ${(received/1024/1024).toFixed(1)}MB / ${(fileSize/1024/1024).toFixed(1)}MB`);
+      }
     });
 
     req.on('end', () => {
@@ -140,12 +152,11 @@ function startServer() {
         buf,
         meta: { name: fileName, size: fileSize || buf.length, hash: fileHash, compressed },
         roomCode,
-        expires: Date.now() + 30 * 60 * 1000, // 30 min
+        expires: Date.now() + 60 * 60 * 1000, // 60 min
       });
 
-      console.log('[transfer] stored', (buf.length/1024/1024).toFixed(2), 'MB token:', token);
+      console.log('[upload] complete', (buf.length/1024/1024).toFixed(2), 'MB token:', token.slice(0,8));
 
-      // Notify listeners via socket that file is ready to download
       const room = rooms.get(roomCode.toUpperCase());
       if (room) {
         io.to(room.code).emit('file:http-ready', {
@@ -161,8 +172,8 @@ function startServer() {
     });
 
     req.on('error', err => {
-      console.error('[transfer] upload error:', err.message);
-      res.status(500).json({ error: err.message });
+      console.error('[upload] error:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: err.message });
     });
   });
 
@@ -489,8 +500,17 @@ function startServer() {
         return socket.emit('room:rejoin-err', { msg: 'Room has expired. Please create or join a new room.' });
 
       if (role === 'master') {
-        if (room.masterSid && room.masterSid !== socket.id)
-          return socket.emit('room:rejoin-err', { msg: 'Host slot already taken.' });
+        if (room.masterSid && room.masterSid !== socket.id) {
+          // Only reject if the old socket is STILL connected
+          // (not just a stale masterSid from a previous connection)
+          const oldSocket = io.sockets.sockets.get(room.masterSid);
+          if (oldSocket && oldSocket.connected) {
+            return socket.emit('room:rejoin-err', { msg: 'Host slot already taken.' });
+          }
+          // Old socket is gone — allow this new socket to take over
+          console.log('[room] clearing stale masterSid, accepting rejoin');
+          room.masterSid = null;
+        }
         clearTimeout(room._masterTimeout);
         room.masterSid = socket.id;
         socket.join(c);
