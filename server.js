@@ -774,7 +774,7 @@ function startServer() {
       const code = socket.data.code;
       const room = rooms.get(code);
       if (!room) return;
-      const ALLOWED = ['❤️','🔥','😮','😂','👏','🎵','💯','🙌'];
+      const ALLOWED = ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💕","💞","💓","💗","💖","💘","💝","💟","❣️","😍","🥰","😘","😗","😚","😙","🎵","🎶","🎸","🥁","🎹","🎺","🎻","🎤","🎧","🔥","💯","✨","💥","🚀","⚡","🌟","👑","🏆","😂","🤩","😮","😢","🥺","😎","🤯","😱","🙏","👏","🙌","🤙","👍","🫶"];
       if (!ALLOWED.includes(emoji)) return;
       const user = socket.request?.user;
       const senderName = (room.followers.get(socket.id)?.displayName)
