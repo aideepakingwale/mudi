@@ -519,6 +519,16 @@ select,input,button,textarea{font-family:inherit;}
   <div style="display:flex;flex-direction:column;gap:clamp(10px,3vw,14px);position:relative;z-index:1;">
     <button class="btn btn-p" id="btn-host">◈ &nbsp;Host a Room</button>
     <button class="btn btn-s" id="btn-join">◉ &nbsp;Join a Room</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-ghost" id="btn-my-rooms"
+        style="flex:1;font-size:clamp(10px,2.8vw,12px);min-height:42px;">
+        🏠 My Rooms
+      </button>
+      <button class="btn btn-ghost" id="btn-analytics"
+        style="flex:1;font-size:clamp(10px,2.8vw,12px);min-height:42px;">
+        📊 Analytics
+      </button>
+    </div>
   </div>
   <p style="text-align:center;font-size:clamp(8px,2.2vw,10px);color:var(--muted);margin-top:clamp(10px,3vw,16px);letter-spacing:.06em;">
     Sub-15ms sync · WebRTC P2P · End-to-end encrypted
