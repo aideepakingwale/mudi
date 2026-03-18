@@ -1536,60 +1536,93 @@ async function sendViaWebRTC(buf, name, hash, openDCs, compressed = false) {
 }
 
 async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false) {
-  // HTTP upload — much faster than socket.io relay
-  // No JSON framing overhead, browser handles streaming natively
   const MB = 1024 * 1024;
-  console.log('[relay] HTTP upload', (buf.byteLength / MB).toFixed(2), 'MB',
-    compressed ? '(compressed)' : '');
 
-  $('prog-send-label').textContent = 'Uploading...';
+  $('prog-send-label').textContent = 'Preparing transfer...';
   $('prog-send').style.width = '0%';
 
-  const params = new URLSearchParams({
+  const qp = new URLSearchParams({
     room:       S.code || '',
-    name:       name,
-    hash:       hash,
+    name:       encodeURIComponent(name),
+    hash,
     size:       String(buf.byteLength),
     compressed: compressed ? '1' : '0',
   });
 
+  // Try R2 first — fastest path (direct to Cloudflare CDN)
   try {
-    // Use XMLHttpRequest so we get upload progress events
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/transfer/upload?' + params.toString());
+    const r2Res  = await fetch('/transfer/r2/presign?' + qp, { method: 'POST' });
+    if (r2Res.ok) {
+      const { token, putUrl } = await r2Res.json();
+      console.log('[r2] uploading directly to R2', (buf.byteLength/MB).toFixed(2)+'MB');
+      $('prog-send-label').textContent = 'Uploading to CDN...';
 
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
+      // PUT directly to R2 — no server in the middle
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', putUrl);
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+        xhr.upload.onprogress = e => {
+          if (!e.lengthComputable) return;
           const pct = e.loaded / e.total;
           $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
           $('prog-send-label').textContent =
-            (e.loaded / MB).toFixed(2) + ' / ' + (e.total / MB).toFixed(2) + ' MB';
-        }
-      };
+            (e.loaded/MB).toFixed(2) + ' / ' + (e.total/MB).toFixed(2) + ' MB  (CDN)';
+        };
 
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          resolve(JSON.parse(xhr.responseText));
-        } else {
-          reject(new Error('Upload failed: ' + xhr.status + ' ' + xhr.responseText));
-        }
-      };
+        xhr.onload  = () => (xhr.status === 200 || xhr.status === 204)
+          ? resolve() : reject(new Error('R2 PUT error ' + xhr.status));
+        xhr.onerror   = () => reject(new Error('R2 network error'));
+        xhr.ontimeout = () => reject(new Error('R2 upload timed out'));
+        xhr.timeout   = 15 * 60 * 1000;
+        xhr.send(buf);
+      });
 
-      xhr.onerror = () => reject(new Error('Upload network error'));
-      xhr.ontimeout = () => reject(new Error('Upload timed out'));
-      xhr.timeout = 10 * 60 * 1000; // 10 min max upload time
-
-      xhr.send(buf);
-    });
-
-    $('prog-send-label').textContent  = '✓ Uploaded — listeners downloading...';
-    $('hash-badge-send').style.display = 'inline-flex';
-    console.log('[relay] HTTP upload complete');
-
-  } catch (err) {
-    throw new Error('HTTP upload failed: ' + err.message);
+      // Tell server upload is done → server notifies listeners with download URL
+      await fetch('/transfer/r2/confirm/' + token, { method: 'POST' });
+      $('prog-send-label').textContent  = '✓ Uploaded to CDN — listeners downloading...';
+      $('hash-badge-send').style.display = 'inline-flex';
+      console.log('[r2] upload complete, listeners notified');
+      return; // done — no fallback needed
+    }
+  } catch(e) {
+    console.warn('[r2] not available, falling back to server pipe:', e.message);
   }
+
+  // Fallback: server streaming pipe (works without R2 config)
+  console.log('[pipe] streaming upload', (buf.byteLength/MB).toFixed(2)+'MB');
+  $('prog-send-label').textContent = 'Uploading...';
+
+  const initRes = await fetch('/transfer/init?' + qp, { method: 'POST' });
+  if (!initRes.ok) throw new Error('Transfer init failed: ' + initRes.status);
+  const { token } = await initRes.json();
+
+  await new Promise(r => setTimeout(r, 200));
+
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/transfer/upload/' + token);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const pct = e.loaded / e.total;
+      $('prog-send').style.width = (pct * 100).toFixed(1) + '%';
+      $('prog-send-label').textContent =
+        (e.loaded/MB).toFixed(2) + ' / ' + (e.total/MB).toFixed(2) + ' MB';
+    };
+
+    xhr.onload  = () => xhr.status === 200
+      ? resolve() : reject(new Error('Upload error ' + xhr.status));
+    xhr.onerror   = () => reject(new Error('Upload network error'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out'));
+    xhr.timeout   = 15 * 60 * 1000;
+    xhr.send(buf);
+  });
+
+  $('prog-send-label').textContent  = '✓ Uploaded — listeners downloading...';
+  $('hash-badge-send').style.display = 'inline-flex';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2251,43 +2284,44 @@ function initSocket() {
     $('recv-fsize').textContent = (size/1024/1024).toFixed(2)+' MB';
   });
 
-  /* File via HTTP download (host uploaded to server, we fetch it) */
-  S.socket.on('file:http-ready', async ({ token, name, size, hash, compressed }) => {
-    console.log('[relay] HTTP download ready:', name, (size/1024/1024).toFixed(2), 'MB');
+  /* Streaming download — opens GET before host starts uploading */
+  S.socket.on('file:stream-ready', async ({ token, name, size, hash, compressed }) => {
+    console.log('[stream] download ready:', name, (size/1024/1024).toFixed(2)+'MB');
 
     $('wait-file').style.display     = 'none';
     $('recv-block').style.display    = 'block';
     $('recv-fname').textContent      = name;
-    $('recv-fsize').textContent      = (size/1024/1024).toFixed(2) + ' MB';
-    $('prog-recv-label').textContent = 'Downloading...';
+    $('recv-fsize').textContent      = size ? (size/1024/1024).toFixed(2)+' MB' : '...';
+    $('prog-recv-label').textContent = 'Connecting to stream...';
     $('prog-recv').style.width       = '0%';
     $('prog-recv-label').style.color = '';
 
     try {
-      // Download with progress tracking via XHR
+      // XHR streaming download — progress fires as bytes arrive
       const rawBuf = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('GET', '/transfer/download/' + token);
+        xhr.open('GET', '/transfer/stream/' + token);
         xhr.responseType = 'arraybuffer';
 
-        xhr.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = e.loaded / e.total;
-            $('prog-recv').style.width = (pct * 100).toFixed(1) + '%';
-            $('prog-recv-label').textContent =
-              (e.loaded / (1024*1024)).toFixed(2) + ' / ' + (e.total / (1024*1024)).toFixed(2) + ' MB';
+        xhr.onprogress = e => {
+          const loaded = e.loaded;
+          const total  = e.lengthComputable ? e.total : size;
+          if (total > 0) {
+            $('prog-recv').style.width = Math.min(loaded/total*100, 99).toFixed(1) + '%';
           }
+          $('prog-recv-label').textContent =
+            (loaded/(1024*1024)).toFixed(2) + (total ? ' / '+(total/(1024*1024)).toFixed(2) : '') + ' MB';
         };
 
-        xhr.onload = () => {
-          if (xhr.status === 200) resolve(xhr.response);
-          else reject(new Error('Download failed: ' + xhr.status));
-        };
-        xhr.onerror   = () => reject(new Error('Download network error'));
-        xhr.ontimeout = () => reject(new Error('Download timed out'));
-        xhr.timeout   = 10 * 60 * 1000;
+        xhr.onload    = () => xhr.status === 200
+          ? resolve(xhr.response) : reject(new Error('Stream error ' + xhr.status));
+        xhr.onerror   = () => reject(new Error('Stream network error'));
+        xhr.ontimeout = () => reject(new Error('Stream timed out'));
+        xhr.timeout   = 20 * 60 * 1000; // 20 min
         xhr.send();
       });
+
+      $('prog-recv').style.width = '100%';
 
       // Decompress if needed
       let finalBuf = rawBuf;
@@ -2297,7 +2331,7 @@ function initSocket() {
       }
 
       // Verify SHA-256
-      $('prog-recv-label').textContent = 'Verifying...';
+      $('prog-recv-label').textContent = 'Verifying integrity...';
       const gotHash = await sha256hex(finalBuf.slice(0));
       if (gotHash !== hash) {
         $('prog-recv-label').textContent = '✗ Hash mismatch — please retry';
@@ -2311,20 +2345,84 @@ function initSocket() {
       S.fileSize = finalBuf.byteLength;
       S.fileHash = gotHash;
 
-      $('prog-recv-label').textContent   = '✓ Verified — SHA-256 match';
+      $('prog-recv-label').textContent   = '✓ Ready to play';
       $('hash-badge-recv').style.display = 'inline-flex';
       $('wait-sync-msg').style.display   = 'block';
       S.socket.emit('file:ready', { hash: gotHash });
-      toast('File downloaded & verified ✓');
+      toast('File received ✓');
 
     } catch(e) {
-      $('prog-recv-label').textContent = '✗ Error: ' + e.message;
+      $('prog-recv-label').textContent = '✗ ' + e.message;
       $('prog-recv-label').style.color = 'var(--red)';
-      logError('HTTP download error: ' + e.message, e.stack, 'file:http-ready');
+      logError('Stream error: ' + e.message, e.stack, 'file:stream-ready');
     }
   });
 
-  // file:relay-done removed — replaced by file:http-ready HTTP download
+  // file:relay-done removed — replaced by streaming/R2 download
+
+  /* R2 CDN download — fastest path */
+  S.socket.on('file:r2-ready', async ({ url, name, size, hash, compressed }) => {
+    console.log('[r2] download from CDN:', name, (size/1024/1024).toFixed(2)+'MB');
+
+    $('wait-file').style.display     = 'none';
+    $('recv-block').style.display    = 'block';
+    $('recv-fname').textContent      = name;
+    $('recv-fsize').textContent      = size ? (size/1024/1024).toFixed(2)+' MB' : '...';
+    $('prog-recv-label').textContent = 'Downloading from CDN...';
+    $('prog-recv').style.width       = '0%';
+    $('prog-recv-label').style.color = '';
+
+    try {
+      const rawBuf = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url);
+        xhr.responseType = 'arraybuffer';
+
+        xhr.onprogress = e => {
+          const loaded = e.loaded;
+          const total  = e.lengthComputable ? e.total : size;
+          if (total > 0) $('prog-recv').style.width = Math.min(loaded/total*100, 99).toFixed(1)+'%';
+          $('prog-recv-label').textContent =
+            (loaded/1048576).toFixed(2) + (total ? ' / '+(total/1048576).toFixed(2) : '') + ' MB  (CDN)';
+        };
+
+        xhr.onload    = () => xhr.status === 200
+          ? resolve(xhr.response) : reject(new Error('CDN download error '+xhr.status));
+        xhr.onerror   = () => reject(new Error('CDN network error'));
+        xhr.ontimeout = () => reject(new Error('CDN download timed out'));
+        xhr.timeout   = 20 * 60 * 1000;
+        xhr.send();
+      });
+
+      $('prog-recv').style.width = '100%';
+      let finalBuf = rawBuf;
+      if (compressed && typeof DecompressionStream !== 'undefined') {
+        $('prog-recv-label').textContent = 'Decompressing...';
+        finalBuf = await decompressBuf(rawBuf);
+      }
+
+      $('prog-recv-label').textContent = 'Verifying integrity...';
+      const gotHash = await sha256hex(finalBuf.slice(0));
+      if (gotHash !== hash) {
+        $('prog-recv-label').textContent = '\u2717 Hash mismatch — retry';
+        $('prog-recv-label').style.color = 'var(--red)';
+        toast('File integrity check failed');
+        return;
+      }
+
+      S.fileBuf  = finalBuf; S.fileName = name;
+      S.fileSize = finalBuf.byteLength; S.fileHash = gotHash;
+      $('prog-recv-label').textContent   = '\u2713 Ready to play';
+      $('hash-badge-recv').style.display = 'inline-flex';
+      $('wait-sync-msg').style.display   = 'block';
+      S.socket.emit('file:ready', { hash: gotHash });
+      toast('File downloaded \u2713');
+    } catch(e) {
+      $('prog-recv-label').textContent = '\u2717 ' + e.message;
+      $('prog-recv-label').style.color = 'var(--red)';
+      logError('R2 download error: '+e.message, e.stack, 'file:r2-ready');
+    }
+  });
 
   S.socket.on('file:ready', ({ readyCount, allReady, listenerCount }) => {
     S.readyCount = readyCount;

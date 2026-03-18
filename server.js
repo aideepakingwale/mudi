@@ -109,84 +109,269 @@ function startServer() {
     res.sendFile(path.join(__dirname, 'public', 'terms.html'))
   );
 
-  // ── HTTP file transfer ───────────────────────────────────────────────────
-  // Host uploads file via HTTP POST (no socket overhead)
-  // Listener downloads via HTTP GET using the transfer token
-  const transferStore = new Map(); // token → { buf, meta, roomCode, expires }
+  // ── File Transfer ────────────────────────────────────────────────────────
+  //
+  // Mode A — Cloudflare R2 (when R2_* env vars are set):
+  //   Host  → PUT presigned URL → R2 bucket (bypasses this server entirely)
+  //   Server → emits presigned GET URL to listeners via socket
+  //   Listeners → GET presigned URL → R2 (Cloudflare CDN, full speed)
+  //
+  // Mode B — Server streaming pipe (fallback, no R2 config needed):
+  //   Host → POST /transfer/upload/:token → PassThrough → GET /transfer/stream/:token → Listeners
+  //   Listener starts receiving bytes the moment host starts uploading.
+  //
+  const { PassThrough } = require('stream');
+  const transferStore   = new Map(); // token → entry (Mode B)
 
-  // Clean up stale transfers every 5 minutes
+  // R2 presigned URL generation — no AWS SDK needed
+  // Uses Node 18 built-in crypto for AWS Signature V4
+  const { createHmac, createHash } = require('crypto');
+
+  function r2Configured() {
+    return !!(process.env.R2_ACCOUNT_ID &&
+              process.env.R2_ACCESS_KEY_ID &&
+              process.env.R2_SECRET_ACCESS_KEY);
+  }
+
+  function sha256hex(data) {
+    return createHash('sha256').update(data).digest('hex');
+  }
+
+  function hmacSha256(key, data) {
+    return createHmac('sha256', key).update(data).digest();
+  }
+
+  function awsSigningKey(secretKey, date, region, service) {
+    const kDate    = hmacSha256('AWS4' + secretKey, date);
+    const kRegion  = hmacSha256(kDate, region);
+    const kService = hmacSha256(kRegion, service);
+    return hmacSha256(kService, 'aws4_request');
+  }
+
+  // Generate a presigned URL for PUT or GET
+  function r2PresignedUrl(method, key, expiresIn = 900) {
+    const bucket    = process.env.R2_BUCKET_NAME || 'mudi-transfers';
+    const accountId = process.env.R2_ACCOUNT_ID;
+    const accessKey = process.env.R2_ACCESS_KEY_ID;
+    const secretKey = process.env.R2_SECRET_ACCESS_KEY;
+    const region    = 'auto';
+    const service   = 's3';
+    const host      = `${bucket}.${accountId}.r2.cloudflarestorage.com`;
+
+    const now       = new Date();
+    const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');  // YYYYMMDD
+    const amzDate   = now.toISOString().replace(/[:-]|\.\d{3}/g, '');  // YYYYMMDDTHHmmssZ
+
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+    const credential      = `${accessKey}/${credentialScope}`;
+
+    const queryParams = new URLSearchParams({
+      'X-Amz-Algorithm':     'AWS4-HMAC-SHA256',
+      'X-Amz-Credential':    credential,
+      'X-Amz-Date':          amzDate,
+      'X-Amz-Expires':       String(expiresIn),
+      'X-Amz-SignedHeaders': 'host',
+    });
+
+    const canonicalQueryString = queryParams.toString();
+    const canonicalHeaders     = `host:${host}\n`;
+    const signedHeaders        = 'host';
+    const payloadHash          = 'UNSIGNED-PAYLOAD';
+
+    const canonicalRequest = [
+      method,
+      `/${encodeURIComponent(key).replace(/%2F/g, '/')}`,
+      canonicalQueryString,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      sha256hex(canonicalRequest),
+    ].join('\n');
+
+    const signingKey = awsSigningKey(secretKey, dateStamp, region, service);
+    const signature  = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+
+    queryParams.set('X-Amz-Signature', signature);
+
+    return `https://${host}/${encodeURIComponent(key).replace(/%2F/g, '/')}?${queryParams.toString()}`;
+  }
+
+  // Delete an object from R2
+  async function deleteR2Object(key) {
+    if (!r2Configured()) return;
+    const bucket = process.env.R2_BUCKET_NAME || 'mudi-transfers';
+    try {
+      // R2 DELETE uses the same AWS4 signing as GET/PUT
+      const deleteUrl = r2PresignedUrl('DELETE', key, 300);
+      const res = await fetch(deleteUrl, { method: 'DELETE' });
+      if (res.ok || res.status === 204 || res.status === 404) {
+        console.log('[r2] deleted:', key);
+      } else {
+        console.warn('[r2] delete returned', res.status, 'for', key);
+      }
+    } catch(e) {
+      console.error('[r2] delete error:', e.message);
+    }
+  }
+
+  // Clean up Mode B transfers
   setInterval(() => {
     const now = Date.now();
     for (const [token, t] of transferStore) {
-      if (t.expires < now) { transferStore.delete(token); console.log('[transfer] expired', token); }
+      if (t.expires < now) {
+        try { if (t.pass) t.pass.destroy(); } catch(e) {}
+        transferStore.delete(token);
+      }
     }
   }, 5 * 60 * 1000);
 
-  // Host uploads file — raw streaming, no body parser interference
-  app.post('/transfer/upload', requireAuth, (req, res) => {
+  // ── MODE A: R2 presigned upload URL ──────────────────────────────────────
+  app.post('/transfer/r2/presign', requireAuth, async (req, res) => {
+    if (!r2Configured()) return res.status(503).json({ error: 'R2 not configured' });
+
     const roomCode   = req.query.room;
     const fileName   = decodeURIComponent(req.query.name || 'audio');
-    const fileHash   = req.query.hash || '';
+    const fileHash   = req.query.hash   || '';
     const fileSize   = parseInt(req.query.size || '0', 10);
     const compressed = req.query.compressed === '1';
 
-    if (!roomCode) return res.status(400).json({ error: 'Missing room code' });
+    if (!roomCode) return res.status(400).json({ error: 'Missing room' });
 
-    const chunks = [];
-    let received = 0;
+    // Object key: roomCode/timestamp-filename (scoped, easy cleanup)
+    const key   = `${roomCode.toUpperCase()}/${Date.now()}-${encodeURIComponent(fileName)}`;
+    const bucket = process.env.R2_BUCKET_NAME || 'mudi-transfers';
 
-    req.on('data', chunk => {
-      chunks.push(chunk);
-      received += chunk.length;
-      // Log progress for large files
-      if (fileSize > 0 && received % (1024 * 1024) < chunk.length) {
-        console.log(`[upload] ${(received/1024/1024).toFixed(1)}MB / ${(fileSize/1024/1024).toFixed(1)}MB`);
-      }
-    });
+    try {
+      // Presigned PUT — host uploads directly to R2 (15 min window)
+      const putUrl = r2PresignedUrl('PUT', key, 900);
 
-    req.on('end', () => {
-      const buf   = Buffer.concat(chunks);
+      // Presigned GET — listeners download directly from R2 (2 hr window)
+      const getUrl = r2PresignedUrl('GET', key, 7200);
+
+      // Store metadata so we can notify listeners once host confirms upload done
       const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
-
       transferStore.set(token, {
-        buf,
-        meta: { name: fileName, size: fileSize || buf.length, hash: fileHash, compressed },
+        mode: 'r2', key, bucket, getUrl,
+        meta: { name: fileName, size: fileSize, hash: fileHash, compressed },
         roomCode,
-        expires: Date.now() + 60 * 60 * 1000, // 60 min
+        expires: Date.now() + 2 * 60 * 60 * 1000,
       });
 
-      console.log('[upload] complete', (buf.length/1024/1024).toFixed(2), 'MB token:', token.slice(0,8));
+      console.log('[r2] presigned token:', token.slice(0,8), fileName);
+      res.json({ ok: true, token, putUrl });
+    } catch(e) {
+      console.error('[r2] presign error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
 
-      const room = rooms.get(roomCode.toUpperCase());
-      if (room) {
-        io.to(room.code).emit('file:http-ready', {
-          token,
-          name: fileName,
-          size: fileSize || buf.length,
-          hash: fileHash,
-          compressed,
-        });
-      }
+  // Host calls this after R2 PUT completes — server notifies listeners
+  app.post('/transfer/r2/confirm/:token', requireAuth, (req, res) => {
+    const entry = transferStore.get(req.params.token);
+    if (!entry || entry.mode !== 'r2')
+      return res.status(404).json({ error: 'Token not found' });
 
-      res.json({ ok: true, token });
+    const room = rooms.get(entry.roomCode.toUpperCase());
+    if (room) {
+      const { name, size, hash, compressed } = entry.meta;
+
+      // Store R2 key on the room so file:ready handler can delete it
+      room._r2Key            = entry.key;
+      room._r2ReadyCount     = 0;
+      room._r2ExpectedCount  = room.followers.size;
+
+      // Safety net: delete from R2 after 30 min regardless
+      // (covers case where listeners disconnect without sending file:ready)
+      clearTimeout(room._r2DeleteTimer);
+      room._r2DeleteTimer = setTimeout(() => {
+        if (room._r2Key) {
+          console.log('[r2] 30min safety delete:', room._r2Key);
+          deleteR2Object(room._r2Key);
+          room._r2Key = null;
+        }
+      }, 30 * 60 * 1000);
+
+      io.to(room.code).emit('file:r2-ready', {
+        url: entry.getUrl,
+        name, size, hash, compressed,
+      });
+      console.log('[r2] confirmed, notified', room.followers.size,
+        'listeners — will delete after all download');
+    }
+
+    transferStore.delete(req.params.token); // free memory
+    res.json({ ok: true });
+  });
+
+  // ── MODE B: Server streaming pipe (fallback) ─────────────────────────────
+  app.post('/transfer/init', requireAuth, (req, res) => {
+    const roomCode   = req.query.room;
+    const fileName   = decodeURIComponent(req.query.name || 'audio');
+    const fileHash   = req.query.hash   || '';
+    const fileSize   = parseInt(req.query.size || '0', 10);
+    const compressed = req.query.compressed === '1';
+
+    if (!roomCode) return res.status(400).json({ error: 'Missing room' });
+
+    const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const pass  = new PassThrough();
+
+    transferStore.set(token, {
+      mode: 'pipe', pass, listeners: 0, done: false,
+      meta: { name: fileName, size: fileSize, hash: fileHash, compressed },
+      roomCode,
+      expires: Date.now() + 60 * 60 * 1000,
     });
 
+    const room = rooms.get(roomCode.toUpperCase());
+    if (room) {
+      io.to(room.code).emit('file:stream-ready', {
+        token, name: fileName, size: fileSize, hash: fileHash, compressed,
+      });
+    }
+
+    console.log('[pipe] init token:', token.slice(0,8), fileName, (fileSize/1024/1024).toFixed(1)+'MB');
+    res.json({ ok: true, token });
+  });
+
+  app.post('/transfer/upload/:token', requireAuth, (req, res) => {
+    const entry = transferStore.get(req.params.token);
+    if (!entry || entry.mode !== 'pipe') return res.status(404).json({ error: 'Token not found' });
+    if (entry.done) return res.status(409).json({ error: 'Already uploaded' });
+
+    let received = 0;
+    req.on('data', chunk => {
+      received += chunk.length;
+      entry.pass.write(chunk);
+    });
+    req.on('end', () => {
+      entry.pass.end();
+      entry.done = true;
+      console.log('[pipe] done', (received/1024/1024).toFixed(2)+'MB');
+      res.json({ ok: true, received });
+    });
     req.on('error', err => {
-      console.error('[upload] error:', err.message);
+      entry.pass.destroy(err);
       if (!res.headersSent) res.status(500).json({ error: err.message });
     });
   });
 
-  // Listener downloads file by token
-  app.get('/transfer/download/:token', requireAuth, (req, res) => {
+  app.get('/transfer/stream/:token', requireAuth, (req, res) => {
     const entry = transferStore.get(req.params.token);
-    if (!entry) return res.status(404).json({ error: 'Transfer not found or expired' });
+    if (!entry || entry.mode !== 'pipe') return res.status(404).json({ error: 'Not found' });
 
+    entry.listeners++;
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Length', entry.buf.length);
-    res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(entry.meta.name) + '"');
+    if (entry.meta.size) res.setHeader('Content-Length', entry.meta.size);
     res.setHeader('Cache-Control', 'no-store');
-    res.send(entry.buf);
+    entry.pass.pipe(res, { end: true });
+    req.on('close', () => { entry.listeners = Math.max(0, entry.listeners - 1); });
   });
 
   // ── Login page (public) ───────────────────────────────────────────────────
@@ -364,6 +549,12 @@ function startServer() {
 
       if (role === 'master') {
         clearTimeout(room._masterTimeout);
+        // Delete R2 file if host leaves before all listeners downloaded
+        if (room._r2Key) {
+          clearTimeout(room._r2DeleteTimer);
+          deleteR2Object(room._r2Key);
+          room._r2Key = null;
+        }
         nameIndex.delete(room.name.toLowerCase());
         rooms.delete(code);
         socket.to(code).emit('peer:left', { role: 'master', permanent: true });
@@ -431,6 +622,20 @@ function startServer() {
         allReady: snap.allReady, listenerCount: snap.listenerCount,
       });
       io.to(room.code).emit('room:state', snap);
+
+      // R2 deletion: track how many listeners confirmed download
+      if (room._r2Key) {
+        room._r2ReadyCount = (room._r2ReadyCount || 0) + 1;
+        const expected = room._r2ExpectedCount || room.followers.size;
+        console.log(`[r2] ${room._r2ReadyCount}/${expected} listeners verified download`);
+        if (room._r2ReadyCount >= expected) {
+          // All listeners have downloaded and verified — delete from R2 now
+          clearTimeout(room._r2DeleteTimer);
+          const key = room._r2Key;
+          room._r2Key = null;
+          deleteR2Object(key);
+        }
+      }
     });
 
     // ── Sync commands ────────────────────────────────────────────────────────
@@ -473,6 +678,12 @@ function startServer() {
         clearTimeout(room._masterTimeout);
         // Give master 30 s to reconnect before closing the room
         room._masterTimeout = setTimeout(() => {
+          // Clean up R2 file if room expires before all listeners downloaded
+          if (room._r2Key) {
+            clearTimeout(room._r2DeleteTimer);
+            deleteR2Object(room._r2Key);
+            room._r2Key = null;
+          }
           nameIndex.delete(room.name.toLowerCase());
           rooms.delete(code);
           io.to(code).emit('peer:left', { role: 'master', permanent: true });
