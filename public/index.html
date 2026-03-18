@@ -352,20 +352,46 @@ select,input,button,textarea{font-family:inherit;}
 #chat-unread.show{display:flex;}
 
 /* ── Reactions ── */
-#reaction-bar{
-  display:none;position:fixed;bottom:calc(130px + var(--sab));
+/* WhatsApp-style emoji picker */
+#emoji-backdrop{
+  display:none;position:fixed;inset:0;z-index:440;background:transparent;
+}
+#emoji-backdrop.show{display:block;}
+#emoji-picker{
+  display:none;position:fixed;bottom:calc(80px + var(--sab));
   left:var(--sp);right:var(--sp);
-  background:var(--surf2);border:1px solid var(--bdr);border-radius:20px;
-  padding:10px 12px;gap:4px;flex-wrap:wrap;justify-content:center;z-index:450;
-  box-shadow:0 4px 24px rgba(0,0,0,.6);
-  max-width:400px;margin:0 auto;
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:20px;
+  z-index:450;box-shadow:0 8px 32px rgba(0,0,0,.7);
+  overflow:hidden;max-height:360px;
+  flex-direction:column;
 }
-#reaction-bar.visible{display:flex;}
+#emoji-picker.show{display:flex;}
+#emoji-picker-tabs{
+  display:flex;border-bottom:1px solid var(--bdr);flex-shrink:0;
+  overflow-x:auto;scrollbar-width:none;
+}
+#emoji-picker-tabs::-webkit-scrollbar{display:none;}
+.ep-tab{
+  background:none;border:none;padding:10px 14px;font-size:18px;cursor:pointer;
+  border-bottom:2px solid transparent;flex-shrink:0;
+  -webkit-tap-highlight-color:transparent;transition:border-color .15s;
+}
+.ep-tab.active{border-bottom-color:var(--cyan);}
+#emoji-picker-grid{
+  display:grid;grid-template-columns:repeat(8,1fr);gap:2px;
+  padding:10px;overflow-y:auto;flex:1;
+}
 .rxn-btn{
-  background:none;border:none;font-size:22px;cursor:pointer;padding:4px;
-  border-radius:12px;transition:transform .15s;-webkit-tap-highlight-color:transparent;
+  background:none;border:none;font-size:26px;cursor:pointer;
+  padding:6px;border-radius:10px;text-align:center;line-height:1;
+  transition:transform .12s,background .12s;-webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
 }
-.rxn-btn:active{transform:scale(1.35);}
+.rxn-btn:active{transform:scale(1.3);background:var(--surf2);}
+.rxn-float{
+  position:fixed;font-size:28px;z-index:600;pointer-events:none;
+  animation:rxn-fly 1.8s ease-out forwards;
+}
 .rxn-float{
   position:fixed;font-size:28px;z-index:600;pointer-events:none;
   animation:rxn-fly 1.8s ease-out forwards;
@@ -872,8 +898,9 @@ select,input,button,textarea{font-family:inherit;}
 
   <!-- Reaction bar toggle (visible during playback) -->
   <div id="rxn-toggle-row" style="display:none;justify-content:center;margin:2px 0;">
-    <button onclick="toggleReactionBar()" style="background:none;border:1px solid var(--bdr);
-      border-radius:20px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;">
+    <button onclick="toggleEmojiPicker()" style="background:none;border:1px solid var(--bdr);
+      border-radius:20px;color:var(--muted);font-size:11px;padding:5px 14px;cursor:pointer;
+      -webkit-tap-highlight-color:transparent;">
       React 😊
     </button>
   </div>
@@ -936,63 +963,17 @@ select,input,button,textarea{font-family:inherit;}
 </div>
 
 <!-- ══ REACTION BAR ══════════════════════════════════════════════════════ -->
-<div id="reaction-bar">
-  <button class="rxn-btn" onclick="sendReaction('❤️')">❤️</button>
-  <button class="rxn-btn" onclick="sendReaction('🧡')">🧡</button>
-  <button class="rxn-btn" onclick="sendReaction('💛')">💛</button>
-  <button class="rxn-btn" onclick="sendReaction('💚')">💚</button>
-  <button class="rxn-btn" onclick="sendReaction('💙')">💙</button>
-  <button class="rxn-btn" onclick="sendReaction('💜')">💜</button>
-  <button class="rxn-btn" onclick="sendReaction('🖤')">🖤</button>
-  <button class="rxn-btn" onclick="sendReaction('🤍')">🤍</button>
-  <button class="rxn-btn" onclick="sendReaction('🤎')">🤎</button>
-  <button class="rxn-btn" onclick="sendReaction('💕')">💕</button>
-  <button class="rxn-btn" onclick="sendReaction('💞')">💞</button>
-  <button class="rxn-btn" onclick="sendReaction('💓')">💓</button>
-  <button class="rxn-btn" onclick="sendReaction('💗')">💗</button>
-  <button class="rxn-btn" onclick="sendReaction('💖')">💖</button>
-  <button class="rxn-btn" onclick="sendReaction('💘')">💘</button>
-  <button class="rxn-btn" onclick="sendReaction('💝')">💝</button>
-  <button class="rxn-btn" onclick="sendReaction('💟')">💟</button>
-  <button class="rxn-btn" onclick="sendReaction('❣️')">❣️</button>
-  <button class="rxn-btn" onclick="sendReaction('😍')">😍</button>
-  <button class="rxn-btn" onclick="sendReaction('🥰')">🥰</button>
-  <button class="rxn-btn" onclick="sendReaction('😘')">😘</button>
-  <button class="rxn-btn" onclick="sendReaction('😗')">😗</button>
-  <button class="rxn-btn" onclick="sendReaction('😚')">😚</button>
-  <button class="rxn-btn" onclick="sendReaction('😙')">😙</button>
-  <button class="rxn-btn" onclick="sendReaction('🎵')">🎵</button>
-  <button class="rxn-btn" onclick="sendReaction('🎶')">🎶</button>
-  <button class="rxn-btn" onclick="sendReaction('🎸')">🎸</button>
-  <button class="rxn-btn" onclick="sendReaction('🥁')">🥁</button>
-  <button class="rxn-btn" onclick="sendReaction('🎹')">🎹</button>
-  <button class="rxn-btn" onclick="sendReaction('🎺')">🎺</button>
-  <button class="rxn-btn" onclick="sendReaction('🎻')">🎻</button>
-  <button class="rxn-btn" onclick="sendReaction('🎤')">🎤</button>
-  <button class="rxn-btn" onclick="sendReaction('🎧')">🎧</button>
-  <button class="rxn-btn" onclick="sendReaction('🔥')">🔥</button>
-  <button class="rxn-btn" onclick="sendReaction('💯')">💯</button>
-  <button class="rxn-btn" onclick="sendReaction('✨')">✨</button>
-  <button class="rxn-btn" onclick="sendReaction('💥')">💥</button>
-  <button class="rxn-btn" onclick="sendReaction('🚀')">🚀</button>
-  <button class="rxn-btn" onclick="sendReaction('⚡')">⚡</button>
-  <button class="rxn-btn" onclick="sendReaction('🌟')">🌟</button>
-  <button class="rxn-btn" onclick="sendReaction('👑')">👑</button>
-  <button class="rxn-btn" onclick="sendReaction('🏆')">🏆</button>
-  <button class="rxn-btn" onclick="sendReaction('😂')">😂</button>
-  <button class="rxn-btn" onclick="sendReaction('🤩')">🤩</button>
-  <button class="rxn-btn" onclick="sendReaction('😮')">😮</button>
-  <button class="rxn-btn" onclick="sendReaction('😢')">😢</button>
-  <button class="rxn-btn" onclick="sendReaction('🥺')">🥺</button>
-  <button class="rxn-btn" onclick="sendReaction('😎')">😎</button>
-  <button class="rxn-btn" onclick="sendReaction('🤯')">🤯</button>
-  <button class="rxn-btn" onclick="sendReaction('😱')">😱</button>
-  <button class="rxn-btn" onclick="sendReaction('🙏')">🙏</button>
-  <button class="rxn-btn" onclick="sendReaction('👏')">👏</button>
-  <button class="rxn-btn" onclick="sendReaction('🙌')">🙌</button>
-  <button class="rxn-btn" onclick="sendReaction('🤙')">🤙</button>
-  <button class="rxn-btn" onclick="sendReaction('👍')">👍</button>
-  <button class="rxn-btn" onclick="sendReaction('🫶')">🫶</button>
+<!-- ══ EMOJI PICKER (WhatsApp-style) ══════════════════════════════════ -->
+<div id="emoji-backdrop" onclick="closeEmojiPicker()"></div>
+<div id="emoji-picker">
+  <div id="emoji-picker-tabs">
+    <button class="ep-tab active" onclick="showEmojiCat(0)" title="Love">❤️</button>
+    <button class="ep-tab" onclick="showEmojiCat(1)" title="Faces">😀</button>
+    <button class="ep-tab" onclick="showEmojiCat(2)" title="Music">🎵</button>
+    <button class="ep-tab" onclick="showEmojiCat(3)" title="Hype">🔥</button>
+    <button class="ep-tab" onclick="showEmojiCat(4)" title="Hands">👏</button>
+  </div>
+  <div id="emoji-picker-grid"></div>
 </div>
 
 <!-- ══ SEEK REQUEST BAR (host sees this) ═════════════════════════════════ -->
@@ -2510,8 +2491,8 @@ function initSocket() {
       reconnection:         true,
       reconnectionAttempts: Infinity,
       reconnectionDelay:    1500,       // wait 1.5s before first retry
-      reconnectionDelayMax: 10000,      // max 10s between retries
-      timeout:              30000,      // connection timeout — matches server pingTimeout
+      reconnectionDelayMax: 8000,       // max 8s between retries
+      timeout:              60000,       // 60s connection timeout
       transports:           ['websocket', 'polling'],  // websocket first, polling as fallback
     });
 
@@ -2542,7 +2523,7 @@ function initSocket() {
     toast('⚠ ' + msg);
   });
 
-  S.socket.on('room:joined', ({ code, name, masterSid, listenerCount, maxListeners }) => {
+  S.socket.on('room:joined', ({ code, name, masterSid, listenerCount, maxListeners, chatHistory }) => {
     S.code = code; S.roomName = name; S.peerSid = masterSid;
     S.listenerCount = listenerCount || 1;
     S.maxListeners  = maxListeners  || 10;
@@ -2559,6 +2540,12 @@ function initSocket() {
 
     saveSession({ code, roomName: name, role: 'follower' });
     toast('Joined "' + (name || code) + '" — waiting for host to share a file');
+
+    // Load chat history
+    if (chatHistory && chatHistory.length) {
+      $('chat-messages').innerHTML = '';
+      chatHistory.forEach(msg => renderChatMsg(msg));
+    }
 
     // Send display name to host
     if (_myDisplayName) {
@@ -2984,13 +2971,18 @@ function initSocket() {
     setTimeout(() => goScreen('home'), 1500);
   });
 
-  S.socket.on('room:rejoined', ({ code, name, role, peerSid, masterSid, listenerCount, followerSids, hasFollower, fileHash, readyCount }) => {
+  S.socket.on('room:rejoined', ({ code, name, role, peerSid, masterSid, listenerCount, followerSids, hasFollower, fileHash, readyCount, chatHistory }) => {
     S.listenerCount = listenerCount || (followerSids ? followerSids.length : 0);
     console.log('[room] rejoined', code, role, 'listeners:', S.listenerCount, 'serverFileHash:', fileHash);
     S.code = code; S.roomName = name; S.role = role;
-    S._transferInProgress = false; // reconnect clears any in-flight transfer state
+    S._transferInProgress = false;
     applyRole();
     saveSession({ code, roomName: name, role, hasPassword: S.hasPassword });
+    // Restore chat history
+    if (chatHistory && chatHistory.length) {
+      $('chat-messages').innerHTML = '';
+      chatHistory.forEach(msg => renderChatMsg(msg));
+    }
 
     if (role === 'master') {
       $('room-name-display').textContent = name;
@@ -3206,14 +3198,26 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   $('back-join').onclick   = () => { $('join-err').textContent=''; goScreen('home'); };
   $('back-room').onclick = () => {
-    if (!confirm('Leave this room? Your session will be lost.')) return;
-    // Stop audio on ALL clients before leaving
+    // Show a native-style confirm — don't leave accidentally
+    const msg = S.role === 'master'
+      ? 'Leave room? This will stop playback for all listeners.'
+      : 'Leave room?';
+    if (!confirm(msg)) return;
     if (S.role === 'master' && S.socket) S.socket.emit('sync:stop');
     stopAudio();
     clearSession();
-    setTimeout(() => { S.socket.disconnect(); setTimeout(() => location.reload(), 100); }, 200);
+    if (S.socket) {
+      S.socket.emit('room:leave');
+      setTimeout(() => location.reload(), 300);
+    } else {
+      location.reload();
+    }
   };
-  $('back-player').onclick = () => goScreen('room');
+  $('back-player').onclick = () => {
+    // Player → Room: safe navigation, never disconnects
+    // Stop local playback on follower, host keeps playing
+    goScreen('room');
+  };
 
   // Home
   $('btn-host').onclick      = () => goScreen('create');
@@ -3453,23 +3457,92 @@ function renderChatMsg({ senderName, role, text, ts, sid }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   REACTIONS
+   EMOJI PICKER — WhatsApp-style with categories
 ═══════════════════════════════════════════════════════════ */
+const EMOJI_CATS = [
+  {
+    label: '❤️', name: 'Love',
+    emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎',
+             '💕','💞','💓','💗','💖','💘','💝','💟','❣️',
+             '😍','🥰','😘','😗','😚','😙','🫦','💋','🫀'],
+  },
+  {
+    label: '😀', name: 'Faces',
+    emojis: ['😂','🤣','😅','😆','😁','😊','🙂','😉','😇',
+             '🤩','😎','🤯','😱','😮','😢','🥺','😭','😤',
+             '🤔','🤭','🥳','😴','🤤','😜','🤪','😝','🫠'],
+  },
+  {
+    label: '🎵', name: 'Music',
+    emojis: ['🎵','🎶','🎸','🥁','🎹','🎺','🎻','🎤','🎧',
+             '🎼','🎙️','📻','🎷','🪗','🪘','🪕','🎚️','🔊'],
+  },
+  {
+    label: '🔥', name: 'Hype',
+    emojis: ['🔥','💯','✨','💥','⚡','🌟','👑','🏆','🥇',
+             '🚀','💫','🌈','🎊','🎉','🎯','💪','🫶','💎'],
+  },
+  {
+    label: '👏', name: 'Hands',
+    emojis: ['👏','🙌','🤙','👍','🫶','🤝','👋','✌️','🤞',
+             '🫰','👌','🤌','🫵','☝️','🙏','💪','🦾','🫂'],
+  },
+];
+
+let _activeCat = 0;
+
+function buildEmojiGrid(catIdx) {
+  const grid = $('emoji-picker-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  EMOJI_CATS[catIdx].emojis.forEach(e => {
+    const btn = document.createElement('button');
+    btn.className = 'rxn-btn';
+    btn.textContent = e;
+    btn.onclick = () => { sendReaction(e); closeEmojiPicker(); };
+    grid.appendChild(btn);
+  });
+}
+
+function showEmojiCat(idx) {
+  _activeCat = idx;
+  buildEmojiGrid(idx);
+  // Update active tab
+  const tabs = document.querySelectorAll('.ep-tab');
+  tabs.forEach((t, i) => t.classList.toggle('active', i === idx));
+}
+
+function toggleEmojiPicker() {
+  const picker   = $('emoji-picker');
+  const backdrop = $('emoji-backdrop');
+  if (!picker) return;
+  const isOpen = picker.classList.contains('show');
+  if (isOpen) {
+    closeEmojiPicker();
+  } else {
+    buildEmojiGrid(_activeCat);
+    picker.classList.add('show');
+    backdrop.classList.add('show');
+  }
+}
+
+function closeEmojiPicker() {
+  const picker   = $('emoji-picker');
+  const backdrop = $('emoji-backdrop');
+  if (picker)   picker.classList.remove('show');
+  if (backdrop) backdrop.classList.remove('show');
+}
+
 function sendReaction(emoji) {
   if (!S.socket) return;
   S.socket.emit('reaction:send', { emoji });
 }
 
-function toggleReactionBar() {
-  const bar = $('reaction-bar');
-  bar.classList.toggle('visible');
-}
-
-function showReactionFloat(emoji, x, y) {
+function showReactionFloat(emoji, x) {
   const el = document.createElement('div');
   el.className = 'rxn-float';
   el.textContent = emoji;
-  el.style.cssText = 'left:' + (x || (Math.random() * 80 + 10)) + '%;bottom:160px;';
+  el.style.cssText = 'left:' + (x || (Math.random() * 70 + 15)) + '%;bottom:180px;';
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1900);
 }

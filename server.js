@@ -32,8 +32,8 @@ function startServer() {
   const server = http.createServer(app);
   const io     = new Server(server, {
     cors: { origin: '*' },
-    pingInterval: 20000,   // 20s — allows headroom during large file transfers
-    pingTimeout:  60000,   // 60s — matches Render / proxy idle timeouts
+    pingInterval: 25000,   // 25s ping interval
+    pingTimeout:  120000,  // 2 min timeout — survives mobile network switches
     connectTimeout: 20000,
   });
 
@@ -541,6 +541,7 @@ function startServer() {
         passwordHash: password ? simpleHash(password.trim()) : null,
         hasPassword:  !!password,
         fileHash:     null,
+        chatLog:      [],   // persists last 100 messages for the session
       });
       nameIndex.set(lc, code);
 
@@ -590,6 +591,7 @@ function startServer() {
         code: c, name: room.name, masterSid: room.masterSid,
         listenerCount: room.followers.size, maxListeners: MAX_LISTENERS,
         yourName: userName,
+        chatHistory: room.chatLog || [],
       });
 
       if (room.masterSid) {
@@ -760,6 +762,9 @@ function startServer() {
       const role    = room.masterSid === socket.id ? 'master' : 'follower';
       const payload = { sid: socket.id, senderName, role, text: msg, ts: Date.now() };
       io.to(code).emit('chat:message', payload);
+      // Keep last 100 messages in room memory for late-joiners
+      room.chatLog.push(payload);
+      if (room.chatLog.length > 100) room.chatLog.shift();
       // Award points
       if (user?.id) {
         db.addPoints(user.id, 'chat', 1).catch(() => {});
@@ -774,8 +779,8 @@ function startServer() {
       const code = socket.data.code;
       const room = rooms.get(code);
       if (!room) return;
-      const ALLOWED = ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💕","💞","💓","💗","💖","💘","💝","💟","❣️","😍","🥰","😘","😗","😚","😙","🎵","🎶","🎸","🥁","🎹","🎺","🎻","🎤","🎧","🔥","💯","✨","💥","🚀","⚡","🌟","👑","🏆","😂","🤩","😮","😢","🥺","😎","🤯","😱","🙏","👏","🙌","🤙","👍","🫶"];
-      if (!ALLOWED.includes(emoji)) return;
+      // Allow any emoji up to 8 chars (covers multi-codepoint emoji like flags + ZWJ sequences)
+      if (!emoji || emoji.length > 8) return;
       const user = socket.request?.user;
       const senderName = (room.followers.get(socket.id)?.displayName)
         || (user?.name || 'Someone');
@@ -876,7 +881,7 @@ function startServer() {
           rooms.delete(code);
           io.to(code).emit('peer:left', { role: 'master', permanent: true });
           console.log(`[room] expired "${room.name}" (no host reconnect)`);
-        }, 5 * 60 * 1000); // 5 minutes — gives mobile time to reconnect
+        }, 10 * 60 * 1000); // 10 minutes — survives mobile network switches
         socket.to(code).emit('peer:left', { role: 'master', permanent: false });
       } else {
         room.followers.delete(socket.id);
@@ -920,8 +925,9 @@ function startServer() {
           listenerCount: room.followers.size,
           followerSids: [...room.followers.keys()],
           hasFollower:   room.followers.size > 0,
-          fileHash:      room.fileHash || null,     // was a file being transferred?
+          fileHash:      room.fileHash || null,
           readyCount:    room.readySet.size,
+          chatHistory:   room.chatLog || [],
         });
         for (const [sid] of room.followers)
           io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id });
