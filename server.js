@@ -43,12 +43,13 @@ function startServer() {
   // ── Body parsers ─────────────────────────────────────────────────────────
   // Apply JSON/form parsers to everything EXCEPT /transfer/upload
   // (upload needs raw body — express.json() 100KB limit kills large files)
+  // Skip body parsers for raw upload routes — express.json() 100KB limit kills large files
   app.use((req, res, next) => {
-    if (req.path === '/transfer/upload') return next(); // skip body parsers
+    if (req.path.startsWith('/transfer/upload')) return next();
     express.json()(req, res, next);
   });
   app.use((req, res, next) => {
-    if (req.path === '/transfer/upload') return next();
+    if (req.path.startsWith('/transfer/upload')) return next();
     express.urlencoded({ extended: true })(req, res, next);
   });
 
@@ -374,6 +375,76 @@ function startServer() {
     req.on('close', () => { entry.listeners = Math.max(0, entry.listeners - 1); });
   });
 
+  // ── Share link redirect ────────────────────────────────────────────────────
+  app.get('/join/:code', (req, res) => {
+    const code = (req.params.code || '').toUpperCase().trim();
+    res.redirect(`/?join=${code}`);
+  });
+
+  // ── Permanent rooms API ───────────────────────────────────────────────────
+  app.get('/api/my-rooms', requireAuth, async (req, res) => {
+    try {
+      const rooms_ = await db.getPermanentRoomsForUser(req.user.id);
+      // Annotate with live status
+      const result = rooms_.map(r => ({
+        ...r,
+        live: rooms.has(r.code),
+        hostOnline: !!(rooms.get(r.code)?.masterSid),
+        listenerCount: rooms.get(r.code)?.followers.size || 0,
+      }));
+      res.json(result);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/permanent-room', requireAuth, async (req, res) => {
+    try {
+      const { name, password } = req.body;
+      if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+      let code; do { code = genCode(); } while (rooms.has(code));
+      const pwHash = password ? simpleHash(password.trim()) : null;
+      const room = await db.createPermanentRoom({ code, name: name.trim().slice(0,32), ownerId: req.user.id, passwordHash: pwHash });
+      res.json(room);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/room-members/:code', requireAuth, async (req, res) => {
+    try {
+      const members = await db.getRoomMembers(req.params.code.toUpperCase());
+      res.json(members);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Analytics API ─────────────────────────────────────────────────────────
+  app.get('/api/analytics', requireAuth, async (req, res) => {
+    try {
+      const data = await db.getAnalytics(req.user.id);
+      res.json(data);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── PWA manifest ──────────────────────────────────────────────────────────
+  app.get('/manifest.json', (_req, res) => {
+    res.json({
+      name: 'MuDi',
+      short_name: 'MuDi',
+      description: 'The Digital Aux Cord — sync music with friends',
+      start_url: '/',
+      display: 'standalone',
+      background_color: '#09091A',
+      theme_color: '#00ADB5',
+      orientation: 'portrait-primary',
+      icons: [
+        { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+        { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+      ],
+      categories: ['music', 'entertainment'],
+      shortcuts: [
+        { name: 'Host a Room', url: '/?action=host', description: 'Create a new listening room' },
+        { name: 'Join a Room', url: '/?action=join', description: 'Join an existing room' },
+      ],
+    });
+  });
+
   // ── Login page (public) ───────────────────────────────────────────────────
   app.get('/login', (req, res) => {
     if (req.isAuthenticated()) return res.redirect('/');
@@ -508,7 +579,9 @@ function startServer() {
           return socket.emit('room:err', { msg: 'Incorrect password.' });
       }
 
-      room.followers.set(socket.id, { name: userName });
+      room.followers.set(socket.id, { name: userName, displayName: userName });
+      // Add to permanent room member list if it exists
+      db.addRoomMember(c, socket.request?.user?.id).catch(()=>{});
       socket.join(c);
       socket.data.code = c;
       socket.data.role = 'follower';
@@ -664,6 +737,121 @@ function startServer() {
       if (c) io.to(c).emit('sync:seek', { position, seekAt: Date.now() });
     });
 
+    // ── Display name ─────────────────────────────────────────────────────────
+    socket.on('listener:name', ({ displayName }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || !room.followers.has(socket.id)) return;
+      const safeName = (displayName || '').trim().slice(0, 32) || 'Listener';
+      room.followers.get(socket.id).displayName = safeName;
+      io.to(room.masterSid).emit('listener:name', { peerSid: socket.id, displayName: safeName });
+      io.to(socket.id).emit('listener:name-ack', { displayName: safeName });
+    });
+
+    // ── Room chat ─────────────────────────────────────────────────────────────
+    socket.on('chat:send', async ({ text }) => {
+      const code = socket.data.code;
+      const room = rooms.get(code);
+      if (!room || !text) return;
+      const msg = (text || '').trim().slice(0, 280);
+      if (!msg) return;
+      const user    = socket.request?.user;
+      const senderName = (room.followers.get(socket.id)?.displayName)
+        || (room.masterSid === socket.id ? (user?.name || 'Host') : (user?.name || 'Listener'));
+      const role    = room.masterSid === socket.id ? 'master' : 'follower';
+      const payload = { sid: socket.id, senderName, role, text: msg, ts: Date.now() };
+      io.to(code).emit('chat:message', payload);
+      // Award points
+      if (user?.id) {
+        db.addPoints(user.id, 'chat', 1).catch(() => {});
+        // Update scoreboard for room
+        const scores = await db.getUserScore(user.id).catch(() => ({}));
+        io.to(code).emit('score:update', { userId: user.id, name: senderName, scores });
+      }
+    });
+
+    // ── Reactions ─────────────────────────────────────────────────────────────
+    socket.on('reaction:send', async ({ emoji }) => {
+      const code = socket.data.code;
+      const room = rooms.get(code);
+      if (!room) return;
+      const ALLOWED = ['❤️','🔥','😮','😂','👏','🎵','💯','🙌'];
+      if (!ALLOWED.includes(emoji)) return;
+      const user = socket.request?.user;
+      const senderName = (room.followers.get(socket.id)?.displayName)
+        || (user?.name || 'Someone');
+      io.to(code).emit('reaction:broadcast', { emoji, senderName, sid: socket.id, ts: Date.now() });
+      if (user?.id) {
+        db.addPoints(user.id, 'reaction', 1).catch(() => {});
+        const scores = await db.getUserScore(user.id).catch(() => ({}));
+        io.to(code).emit('score:update', { userId: user.id, name: senderName, scores });
+      }
+    });
+
+    // ── Seek request (listener → host) ───────────────────────────────────────
+    socket.on('seek:request', ({ position }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.masterSid === socket.id) return;
+      const senderName = room.followers.get(socket.id)?.displayName || 'A listener';
+      if (room.masterSid)
+        io.to(room.masterSid).emit('seek:request', { from: socket.id, senderName, position });
+    });
+
+    socket.on('seek:respond', ({ to, approved, position }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.masterSid !== socket.id) return;
+      io.to(to).emit('seek:response', { approved, position });
+      if (approved) {
+        io.to(room.code).emit('sync:seek', { position, seekAt: Date.now() });
+      }
+    });
+
+    // ── Analytics: session tracking ──────────────────────────────────────────
+    socket.on('analytics:session-start', async ({ fileName, fileSize, transferMode }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.masterSid !== socket.id) return;
+      const user = socket.request?.user;
+      try {
+        const sessionId = await db.startSession({
+          roomCode: room.code, roomName: room.name,
+          hostId: user?.id, listenerCount: room.followers.size,
+          fileName, fileSize, transferMode,
+        });
+        room._sessionId   = sessionId;
+        room._sessionStart = Date.now();
+        if (user?.id) db.incrementSessions(user.id, 'master').catch(()=>{});
+      } catch(e) { console.warn('[analytics]', e.message); }
+    });
+
+    socket.on('analytics:session-end', async ({ syncCorrections }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || !room._sessionId) return;
+      try {
+        const dur = Math.round((Date.now() - (room._sessionStart||Date.now())) / 1000);
+        await db.endSession(room._sessionId, { syncCorrections, durationSecs: dur });
+        if (user?.id) db.addPoints(user.id, 'session', 5).catch(()=>{});
+        room._sessionId = null;
+      } catch(e) { console.warn('[analytics]', e.message); }
+    });
+
+    // ── Permanent room status ────────────────────────────────────────────────
+    socket.on('proom:status', ({ code }) => {
+      const live = rooms.get((code||'').toUpperCase());
+      socket.emit('proom:status-res', {
+        code, live: !!live, hostOnline: !!(live?.masterSid),
+        listenerCount: live?.followers.size || 0,
+      });
+    });
+
+    // ── Leaderboard ───────────────────────────────────────────────────────────
+    socket.on('leaderboard:get', async () => {
+      const code = socket.data.code;
+      if (!code) return;
+      try {
+        const board = await db.getLeaderboard(code, 20);
+        socket.emit('leaderboard:data', { board });
+      } catch(e) { console.warn('[leaderboard]', e.message); }
+    });
+
     // ── Disconnect ────────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
       const { code, role } = socket.data;
@@ -765,3 +953,8 @@ function startServer() {
     console.log(`  ╚══════════════════════════════════════╝\n`);
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NEW FEATURE SOCKET HANDLERS — appended after existing initSocket() end
+//  Injected via a second io.on('connection') — Socket.IO merges them cleanly
+// ═══════════════════════════════════════════════════════════════════════════
