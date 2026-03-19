@@ -535,13 +535,16 @@ function startServer() {
 
       rooms.set(code, {
         code, name: roomName,
-        masterSid:   socket.id,
-        followers:   new Map(),
-        readySet:    new Set(),
-        passwordHash: password ? simpleHash(password.trim()) : null,
-        hasPassword:  !!password,
-        fileHash:     null,
-        chatLog:      [],   // persists last 100 messages for the session
+        masterSid:      socket.id,   // current active host socket
+        ownerSid:       socket.id,   // original creator — can always reclaim
+        ownerName:      userName,
+        followers:      new Map(),
+        readySet:       new Set(),
+        passwordHash:   password ? simpleHash(password.trim()) : null,
+        hasPassword:    !!password,
+        fileHash:       null,
+        chatLog:        [],
+        pendingAuxReq:  null,        // { fromSid, fromName } while approval in flight
       });
       nameIndex.set(lc, code);
 
@@ -549,7 +552,7 @@ function startServer() {
       socket.data.code = code;
       socket.data.role = 'master';
 
-      socket.emit('room:created', { code, name: roomName, hasPassword: !!password, maxListeners: MAX_LISTENERS });
+      socket.emit('room:created', { code, name: roomName, hasPassword: !!password, maxListeners: MAX_LISTENERS, isOwner: true });
       console.log(`[room] created "${roomName}" (${code})`);
     });
 
@@ -591,7 +594,9 @@ function startServer() {
         code: c, name: room.name, masterSid: room.masterSid,
         listenerCount: room.followers.size, maxListeners: MAX_LISTENERS,
         yourName: userName,
-        chatHistory: room.chatLog || [],
+        chatHistory:   room.chatLog || [],
+        isOwner:       false,
+        currentHost:   room.masterSid,
       });
 
       if (room.masterSid) {
@@ -801,6 +806,138 @@ function startServer() {
         io.to(room.masterSid).emit('seek:request', { from: socket.id, senderName, position });
     });
 
+    // ── Aux cord transfer ────────────────────────────────────────────────────
+
+    // Listener requests the aux cord
+    socket.on('aux:request', () => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.masterSid === socket.id) return; // already host
+      if (!room.masterSid) return; // no host online
+      const follower = room.followers.get(socket.id);
+      const name = follower?.displayName || follower?.name || 'A listener';
+      room.pendingAuxReq = { fromSid: socket.id, fromName: name };
+      io.to(room.masterSid).emit('aux:request', { fromSid: socket.id, fromName: name });
+      console.log('[aux] request from', name);
+    });
+
+    // Current host approves or denies
+    socket.on('aux:respond', ({ approved }) => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.masterSid !== socket.id) return;
+      const req = room.pendingAuxReq;
+      room.pendingAuxReq = null;
+      if (!req) return;
+
+      if (!approved) {
+        io.to(req.fromSid).emit('aux:denied');
+        return;
+      }
+
+      const oldHostName = room.followers.get(socket.id)?.displayName
+        || room.followers.get(socket.id)?.name
+        || 'Host';
+      const newHostName = req.fromName;
+
+      // Move old master into followers map
+      room.followers.set(socket.id, { name: oldHostName, displayName: oldHostName });
+      socket.data.role = 'follower';
+
+      // Promote new master
+      room.masterSid = req.fromSid;
+      room.fileHash  = null;
+      room.readySet  = new Set();
+      room.fileHash  = null;
+      const newHostSocket = io.sockets.sockets.get(req.fromSid);
+      if (newHostSocket) {
+        room.followers.delete(req.fromSid);
+        newHostSocket.data.role = 'master';
+      }
+
+      // Notify new host they are now in control
+      io.to(req.fromSid).emit('aux:granted', {
+        newRole:   'master',
+        isOwner:   room.ownerSid === req.fromSid,
+        ownerSid:  room.ownerSid,
+        ownerName: room.ownerName,
+      });
+
+      // Notify old host they are now a follower
+      socket.emit('aux:role-changed', {
+        newRole:    'follower',
+        isOwner:    room.ownerSid === socket.id,
+        newHostName,
+      });
+
+      // Notify all other listeners of the change
+      socket.to(room.code).emit('aux:host-changed', {
+        newHostSid:  req.fromSid,
+        newHostName,
+        oldHostName,
+        isOwner:     room.ownerSid === req.fromSid,
+        ownerSid:    room.ownerSid,
+      });
+
+      // Broadcast a chat message so everyone knows
+      const chatMsg = {
+        sid: 'system', senderName: 'System', role: 'system',
+        text: oldHostName + ' handed the aux to ' + newHostName + ' 🎸',
+        ts: Date.now(),
+      };
+      room.chatLog.push(chatMsg);
+      io.to(room.code).emit('chat:message', chatMsg);
+
+      console.log('[aux] transferred from', oldHostName, 'to', newHostName);
+    });
+
+    // Room owner reclaims the aux cord from anyone
+    socket.on('aux:reclaim', () => {
+      const room = rooms.get(socket.data.code);
+      if (!room || room.ownerSid !== socket.id) return; // only owner can reclaim
+      if (room.masterSid === socket.id) return; // already host
+      room.pendingAuxReq = null;
+
+      const oldHostName = room.followers.get(room.masterSid)?.displayName || 'the current host';
+      const ownerName   = room.followers.get(socket.id)?.displayName
+        || room.followers.get(socket.id)?.name
+        || room.ownerName || 'Room owner';
+
+      // Move current master to followers
+      const currentHostSocket = io.sockets.sockets.get(room.masterSid);
+      if (currentHostSocket) {
+        room.followers.set(room.masterSid, { name: oldHostName, displayName: oldHostName });
+        currentHostSocket.data.role = 'follower';
+        currentHostSocket.emit('aux:role-changed', {
+          newRole: 'follower', isOwner: false, newHostName: ownerName,
+        });
+      }
+
+      // Promote owner back to master
+      room.masterSid = socket.id;
+      room.fileHash  = null;
+      room.readySet  = new Set();
+      if (room.followers.has(socket.id)) room.followers.delete(socket.id);
+      socket.data.role = 'master';
+
+      socket.emit('aux:granted', {
+        newRole: 'master', isOwner: true,
+        ownerSid: room.ownerSid, ownerName: room.ownerName,
+      });
+
+      const chatMsg = {
+        sid: 'system', senderName: 'System', role: 'system',
+        text: ownerName + ' reclaimed the aux cord 🎤',
+        ts: Date.now(),
+      };
+      room.chatLog.push(chatMsg);
+      io.to(room.code).emit('chat:message', chatMsg);
+      io.to(room.code).emit('aux:host-changed', {
+        newHostSid: socket.id, newHostName: ownerName,
+        oldHostName, isOwner: true, ownerSid: room.ownerSid,
+      });
+
+      console.log('[aux] reclaimed by owner', ownerName);
+    });
+
     socket.on('seek:respond', ({ to, approved, position }) => {
       const room = rooms.get(socket.data.code);
       if (!room || room.masterSid !== socket.id) return;
@@ -928,6 +1065,8 @@ function startServer() {
           fileHash:      room.fileHash || null,
           readyCount:    room.readySet.size,
           chatHistory:   room.chatLog || [],
+          isOwner:       room.ownerSid === socket.id,
+          currentHost:   room.masterSid,
         });
         for (const [sid] of room.followers)
           io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id });

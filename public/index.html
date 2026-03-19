@@ -407,6 +407,27 @@ select,input,button,textarea{font-family:inherit;}
 }
 #waveform-canvas.active{display:block;}
 
+/* ── Aux cord notification ── */
+#aux-req-bar{
+  display:none;position:fixed;top:calc(var(--sat) + 60px);
+  left:var(--sp);right:var(--sp);z-index:491;
+  background:var(--surf2);border:1px solid var(--cyan);border-radius:14px;
+  padding:14px 16px;flex-direction:column;gap:10px;
+  box-shadow:0 4px 24px rgba(0,173,181,.3);
+}
+#aux-req-bar.show{display:flex;}
+#aux-req-text{font-size:13px;color:var(--white);font-weight:500;}
+#aux-req-subtext{font-size:11px;color:var(--muted);}
+.aux-req-btns{display:flex;gap:8px;}
+.aux-req-btn{
+  flex:1;padding:9px;border-radius:10px;border:1px solid var(--bdr);
+  background:var(--surf);color:var(--white);font-family:var(--fm);
+  cursor:pointer;font-size:12px;font-weight:600;
+  -webkit-tap-highlight-color:transparent;
+}
+.aux-req-btn.approve{background:var(--cyan);border-color:var(--cyan);color:#060614;}
+.aux-req-btn.deny{border-color:rgba(226,75,74,.4);color:var(--red);}
+
 /* ── Seek request toast ── */
 #seek-req-bar{
   display:none;position:fixed;top:calc(var(--sat) + 60px);
@@ -821,6 +842,19 @@ select,input,button,textarea{font-family:inherit;}
         <span style="font-size:clamp(10px,2.8vw,12px);color:var(--muted);" class="dots-anim">Waiting for host to start sync play</span>
       </div>
     </div>
+    <!-- Request Aux + Reclaim buttons — shown based on S.isOwner / role -->
+    <button id="btn-request-aux" onclick="requestAux()"
+      style="display:none;background:none;border:1px solid var(--cyan);border-radius:12px;
+      color:var(--cyan);font-family:var(--fm);font-size:clamp(11px,3vw,13px);
+      padding:10px;width:100%;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+      🎸 Request Aux Cord
+    </button>
+    <button id="btn-reclaim-aux" onclick="reclaimAux()"
+      style="display:none;background:none;border:1px solid var(--amber);border-radius:12px;
+      color:var(--amber);font-family:var(--fm);font-size:clamp(11px,3vw,13px);
+      padding:10px;width:100%;cursor:pointer;-webkit-tap-highlight-color:transparent;">
+      🎤 Reclaim Aux Cord
+    </button>
   </div>
 </div>
 
@@ -933,6 +967,18 @@ select,input,button,textarea{font-family:inherit;}
     <input class="inp" id="display-name-input" type="text" maxlength="32"
       placeholder="Your name" autocomplete="nickname">
     <button class="btn btn-p" id="display-name-save">Join Room</button>
+  </div>
+</div>
+
+<!-- ══ AUX CORD REQUEST BAR (shown to current host) ═════════════════════ -->
+<div id="aux-req-bar">
+  <div>
+    <div id="aux-req-text">🎸 Listener wants the aux cord</div>
+    <div id="aux-req-subtext">Let them share a track?</div>
+  </div>
+  <div class="aux-req-btns">
+    <button class="aux-req-btn approve" id="aux-approve-btn">✓ Pass it</button>
+    <button class="aux-req-btn deny"    id="aux-deny-btn">✗ Not now</button>
   </div>
 </div>
 
@@ -1101,6 +1147,21 @@ function yieldToEventLoop() {
 // so heartbeats always get through between batches.
 const RELAY_BATCH = 16;
 
+/* ─────────────────────────────────────────────────────────
+   TOAST DURATIONS  (milliseconds)
+   Adjust these values to change how long messages stay on screen.
+   All toasts can still be dismissed early by tapping them.
+───────────────────────────────────────────────────────── */
+const TOAST_DURATION = {
+  normal:    10000,   // general info messages
+  error:     15000,   // errors and failures (also opens error panel on tap)
+  reaction:   10000,   // emoji reaction toasts
+  transfer:  10000,   // file transfer status
+  aux:       12000,   // aux cord request / handover messages
+  sync:       4000,   // sync play countdown
+  short:      3000,   // quick confirmations (name set, copied, etc)
+};
+
 // ── Compression ───────────────────────────────────────────────────────
 // Only compress formats that benefit. Audio codecs (MP3/AAC/OGG/FLAC)
 // are already compressed — re-compressing them wastes CPU for ~0% gain.
@@ -1191,7 +1252,9 @@ const S = {
   dc             : null,
   pendingICE     : [],
   pendingFile        : null,    // file selected before P2P was ready
-  _transferInProgress: false,   // prevents double-send
+  _transferInProgress: false,
+  isOwner:       false,   // true if this socket created the room
+  currentHostSid: null,   // socket id of whoever currently has the aux
   remoteDescSet  : false,
   // File (master)
   fileRaw    : null,    // original File object
@@ -1302,7 +1365,7 @@ function toast(msg, dur) {
   t.className   = 'toast on' + (isErr ? ' error-toast' : '');
   clearTimeout(_toastTmr);
   // Duration: errors=12s, normal=6s (up from 3s — more readable on mobile)
-  const d = dur !== undefined ? dur : (isErr ? 12000 : 6000);
+  const d = dur !== undefined ? dur : (isErr ? TOAST_DURATION.error : TOAST_DURATION.normal);
   if (isErr) {
     t.onclick = openErrPanel;
     logError(msg, null, '[toast]');
@@ -2501,8 +2564,10 @@ function initSocket() {
   ntpStart();
 
   /* Room */
-  S.socket.on('room:created', ({ code, name, hasPassword, maxListeners }) => {
+  S.socket.on('room:created', ({ code, name, hasPassword, maxListeners, isOwner }) => {
     S.role = 'master'; S.code = code; S.roomName = name; S.hasPassword = hasPassword;
+    S.isOwner = true;  // creator is always the owner
+    S.currentHostSid = S.socket?.id;
     S.maxListeners = maxListeners || 10; S.listenerCount = 0;
     applyRole();
     $('room-name-display').textContent = name;
@@ -2523,13 +2588,16 @@ function initSocket() {
     toast('⚠ ' + msg);
   });
 
-  S.socket.on('room:joined', ({ code, name, masterSid, listenerCount, maxListeners, chatHistory }) => {
+  S.socket.on('room:joined', ({ code, name, masterSid, listenerCount, maxListeners, chatHistory, isOwner, currentHost }) => {
     S.code = code; S.roomName = name; S.peerSid = masterSid;
+    S.isOwner = !!isOwner;
+    S.currentHostSid = currentHost || masterSid;
     S.listenerCount = listenerCount || 1;
     S.maxListeners  = maxListeners  || 10;
     $('room-code-top').textContent = code;
     S.role = 'follower';     // ensure role is set before applyRole
     applyRole();
+    updateAuxButtons();
     goScreen('room');
     updateListenerUI();
 
@@ -3086,7 +3154,7 @@ function initSocket() {
   S.socket.on('reaction:broadcast', ({ emoji, senderName, sid }) => {
     const x = Math.random() * 70 + 15;
     showReactionFloat(emoji, x);
-    if (sid !== S.socket.id) toast(senderName + ' reacted ' + emoji, 2000);
+    if (sid !== S.socket.id) toast(senderName + ' reacted ' + emoji, TOAST_DURATION.reaction);
   });
 
   S.socket.on('seek:request', d => showSeekRequest(d));
@@ -3125,7 +3193,46 @@ function initSocket() {
 
   S.socket.on('listener:name-ack', ({ displayName }) => {
     _myDisplayName = displayName;
-    toast('Name set: ' + displayName);
+    toast('Name set: ' + displayName, TOAST_DURATION.short);
+  });
+
+  /* ── Aux cord socket events ── */
+
+  S.socket.on('aux:request', ({ fromSid, fromName }) => {
+    // Current host sees this — show approval dialog
+    if (S.role === 'master') showAuxRequest({ fromSid, fromName });
+  });
+
+  S.socket.on('aux:denied', () => {
+    const btn = $('btn-request-aux');
+    if (btn) { btn.textContent = '🎸 Request Aux Cord'; btn.style.opacity = '1'; }
+    toast('Host declined the aux request', TOAST_DURATION.aux);
+  });
+
+  S.socket.on('aux:granted', ({ newRole, isOwner, ownerSid, ownerName }) => {
+    // I am the new host
+    S.isOwner = isOwner;
+    S.currentHostSid = S.socket.id;
+    applyAuxRoleChange('master', isOwner, { newHostSid: S.socket.id });
+    stopAudio();
+  });
+
+  S.socket.on('aux:role-changed', ({ newRole, isOwner, newHostName }) => {
+    // I was the host — now I'm a listener
+    S.isOwner = isOwner;
+    stopAudio();
+    applyAuxRoleChange('follower', isOwner, {});
+    toast(newHostName + ' now has the aux cord 🎸', TOAST_DURATION.aux);
+  });
+
+  S.socket.on('aux:host-changed', ({ newHostSid, newHostName, oldHostName, isOwner, ownerSid }) => {
+    // Broadcast to everyone in the room
+    S.currentHostSid = newHostSid;
+    updateAuxButtons();
+    // Update avatar label if relevant
+    if ($('role-label-peer') && S.peerSid === newHostSid) {
+      $('role-label-peer').textContent = 'HOST';
+    }
   });
 
   S.socket.on('peer:rejoined', ({ role, peerSid, listenerCount }) => {
@@ -3233,6 +3340,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('score-close'))    $('score-close').onclick     = () => closeScoreboard();
   if ($('seek-approve-btn')) $('seek-approve-btn').onclick = () => respondSeek(true);
   if ($('seek-deny-btn'))    $('seek-deny-btn').onclick    = () => respondSeek(false);
+  if ($('aux-approve-btn'))  $('aux-approve-btn').onclick  = () => respondAux(true);
+  if ($('aux-deny-btn'))     $('aux-deny-btn').onclick     = () => respondAux(false);
   if ($('chat-send-btn'))    $('chat-send-btn').onclick    = sendChatMsg;
   if ($('chat-input')) {
     $('chat-input').addEventListener('keydown', e => { if (e.key==='Enter') sendChatMsg(); });
@@ -3402,6 +3511,85 @@ function handleJoinURL() {
 
 
 /* ═══════════════════════════════════════════════════════════
+   AUX CORD TRANSFER
+═══════════════════════════════════════════════════════════ */
+let _auxReqTimer = null;
+
+function updateAuxButtons() {
+  const reqBtn     = $('btn-request-aux');
+  const reclaimBtn = $('btn-reclaim-aux');
+  if (!reqBtn || !reclaimBtn) return;
+
+  const isCurrentHost = S.role === 'master';
+  const isOwner       = S.isOwner;
+  const ownerIsHost   = S.currentHostSid === S.socket?.id;
+
+  // Request button: visible to listeners who are not the current host
+  reqBtn.style.display    = (!isCurrentHost) ? 'block' : 'none';
+  reqBtn.textContent      = '🎸 Request Aux Cord';
+
+  // Reclaim button: visible to the room owner when they are NOT the current host
+  reclaimBtn.style.display = (isOwner && !isCurrentHost) ? 'block' : 'none';
+}
+
+function requestAux() {
+  if (!S.socket || S.role === 'master') return;
+  S.socket.emit('aux:request');
+  const btn = $('btn-request-aux');
+  if (btn) { btn.textContent = '⏳ Request sent...'; btn.style.opacity = '0.6'; }
+  toast('Aux request sent to host ⏳', TOAST_DURATION.aux);
+}
+
+function reclaimAux() {
+  if (!S.socket || !S.isOwner) return;
+  if (!confirm('Reclaim the aux cord? Current host will become a listener.')) return;
+  S.socket.emit('aux:reclaim');
+}
+
+let _pendingAuxReq = null;
+
+function showAuxRequest({ fromSid, fromName }) {
+  _pendingAuxReq = { fromSid, fromName };
+  clearTimeout(_auxReqTimer);
+  $('aux-req-text').textContent    = fromName + ' wants the aux cord 🎸';
+  $('aux-req-subtext').textContent = 'Pass control so they can share a track';
+  $('aux-req-bar').classList.add('show');
+  _auxReqTimer = setTimeout(() => $('aux-req-bar').classList.remove('show'), 20000);
+}
+
+function respondAux(approved) {
+  clearTimeout(_auxReqTimer);
+  $('aux-req-bar').classList.remove('show');
+  if (!_pendingAuxReq || !S.socket) return;
+  S.socket.emit('aux:respond', { approved });
+  _pendingAuxReq = null;
+}
+
+function applyAuxRoleChange(newRole, isOwner, extraInfo) {
+  S.role    = newRole;
+  S.isOwner = isOwner;
+  if (extraInfo.newHostSid) S.currentHostSid = extraInfo.newHostSid;
+
+  // Reset file state — new host will share a different file
+  S.fileBuf  = null; S.fileHash = null;
+  S.fileName = null; S.fileSize = 0;
+  S.audioBuf = null; S._transferInProgress = false;
+
+  applyRole();
+  updateAuxButtons();
+  resetFileUI();
+
+  if (newRole === 'master') {
+    // I am now the host — navigate to room, show upload UI
+    goScreen('room');
+    toast('🎸 You have the aux cord! Select a file to share.', TOAST_DURATION.aux);
+  } else {
+    // I am now a listener
+    goScreen('room');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
    PWA — Service Worker Registration
 ═══════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
@@ -3441,8 +3629,16 @@ function sendChatMsg() {
 }
 
 function renderChatMsg({ senderName, role, text, ts, sid }) {
-  const isMe = sid === S.socket?.id;
   const div = document.createElement('div');
+  if (role === 'system') {
+    // System messages (aux transfer etc) shown centred in muted style
+    div.style.cssText = 'text-align:center;font-size:11px;color:var(--muted);padding:4px 0;';
+    div.textContent = text;
+    $('chat-messages').appendChild(div);
+    $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+    return;
+  }
+  const isMe = sid === S.socket?.id;
   div.className = 'chat-msg ' + (isMe ? 'mine' : 'theirs');
   const time = new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   div.innerHTML =
