@@ -854,11 +854,16 @@ function startServer() {
       }
 
       // Notify new host they are now in control
+      // Include full follower list so client can set S.listenerCount
+      // and know who to serve the file to
+      const followerSids = [...room.followers.keys()];
       io.to(req.fromSid).emit('aux:granted', {
-        newRole:   'master',
-        isOwner:   room.ownerSid === req.fromSid,
-        ownerSid:  room.ownerSid,
-        ownerName: room.ownerName,
+        newRole:      'master',
+        isOwner:      room.ownerSid === req.fromSid,
+        ownerSid:     room.ownerSid,
+        ownerName:    room.ownerName,
+        followerSids,                           // all current listeners
+        listenerCount: room.followers.size,
       });
 
       // Notify old host they are now a follower
@@ -918,9 +923,14 @@ function startServer() {
       if (room.followers.has(socket.id)) room.followers.delete(socket.id);
       socket.data.role = 'master';
 
+      const followerSidsReclaim = [...room.followers.keys()];
       socket.emit('aux:granted', {
-        newRole: 'master', isOwner: true,
-        ownerSid: room.ownerSid, ownerName: room.ownerName,
+        newRole:      'master',
+        isOwner:      true,
+        ownerSid:     room.ownerSid,
+        ownerName:    room.ownerName,
+        followerSids: followerSidsReclaim,
+        listenerCount: room.followers.size,
       });
 
       const chatMsg = {

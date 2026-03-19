@@ -1155,7 +1155,7 @@ const RELAY_BATCH = 16;
 const TOAST_DURATION = {
   normal:    10000,   // general info messages
   error:     15000,   // errors and failures (also opens error panel on tap)
-  reaction:   10000,   // emoji reaction toasts
+  reaction:   5000,   // emoji reaction toasts
   transfer:  10000,   // file transfer status
   aux:       12000,   // aux cord request / handover messages
   sync:       4000,   // sync play countdown
@@ -3209,12 +3209,36 @@ function initSocket() {
     toast('Host declined the aux request', TOAST_DURATION.aux);
   });
 
-  S.socket.on('aux:granted', ({ newRole, isOwner, ownerSid, ownerName }) => {
+  S.socket.on('aux:granted', ({ newRole, isOwner, ownerSid, ownerName, followerSids, listenerCount }) => {
     // I am the new host
-    S.isOwner = isOwner;
+    S.isOwner       = isOwner;
     S.currentHostSid = S.socket.id;
-    applyAuxRoleChange('master', isOwner, { newHostSid: S.socket.id });
+    S.listenerCount  = listenerCount || (followerSids ? followerSids.length : 0);
+
     stopAudio();
+    applyAuxRoleChange('master', isOwner, { newHostSid: S.socket.id });
+
+    // Register each existing listener so S.peers is populated
+    // and onFileSelect can find them
+    if (followerSids && followerSids.length > 0) {
+      // Set the first follower as the primary peer target
+      S.peerSid = followerSids[0];
+      // Hide the "waiting for listener" card since listeners already here
+      const pwc = $('peer-wait-card');
+      if (pwc) pwc.style.display = 'none';
+      // Update connected badge
+      updateConnBadge('connected');
+      $('p2p-label').textContent = 'Room ✓';
+      $('av-ring-peer').classList.add('on');
+      // Attempt P2P with each listener in background (relay will be used over internet)
+      followerSids.forEach((sid, i) => {
+        setTimeout(() => initPC(sid), 200 + i * 100);
+      });
+      updateListenerUI();
+      toast('🎸 You have the aux cord! ' + S.listenerCount + ' listener(s) ready — select a file.', TOAST_DURATION.aux);
+    } else {
+      toast('🎸 You have the aux cord! Select a file to share.', TOAST_DURATION.aux);
+    }
   });
 
   S.socket.on('aux:role-changed', ({ newRole, isOwner, newHostName }) => {
