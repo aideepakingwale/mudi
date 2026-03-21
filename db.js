@@ -555,6 +555,22 @@ module.exports = {
       [userId]
     );
   },
+  // Called when live user IDs are available (from socket room state)
+  // Ensures all current room participants appear even with 0 points
+  async getLeaderboardLive(roomCode, liveUserIds = [], limit = 20) {
+    const d = await _getDb();
+    // Upsert 0-point rows for any live user not yet in user_scores
+    for (const uid of liveUserIds) {
+      if (!uid) continue;
+      _run(d,
+        `INSERT OR IGNORE INTO user_scores (user_id, updated_at)
+         VALUES (?, strftime('%s','now'))`,
+        [uid]
+      );
+    }
+    return this.getLeaderboard(roomCode, limit);
+  },
+
   async getLeaderboard(roomCode, limit = 20) {
     return _rows(await _getDb(),
       `SELECT u.id, u.name, u.avatar,

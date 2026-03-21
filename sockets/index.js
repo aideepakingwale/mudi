@@ -364,8 +364,19 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     const code = socket.data.code;
     if (!code) return;
     try {
+      // Collect user IDs of all live room participants so they show on
+      // the board immediately even before earning any points
+      const room = rooms.get(code);
+      const liveUserIds = [];
+      if (room) {
+        const allSids = [room.masterSid, ...room.followers.keys()].filter(Boolean);
+        for (const sid of allSids) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.request?.user?.id) liveUserIds.push(s.request.user.id);
+        }
+      }
       const [board, reactions] = await Promise.all([
-        db.getLeaderboard(code, 20),
+        db.getLeaderboardLive(code, liveUserIds, 20),
         db.getRoomReactions(code, 50),
       ]);
       socket.emit('leaderboard:data', { board, reactions });

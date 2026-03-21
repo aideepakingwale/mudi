@@ -302,7 +302,7 @@ select,input,button,textarea{font-family:inherit;}
   display:none;flex-direction:column;
 }
 #chat-panel.open{display:flex;}
-#chat-topbar{
+#score-topbar,#chat-topbar{
   display:flex;align-items:center;justify-content:space-between;
   padding:12px 16px;border-bottom:1px solid var(--bdr);flex-shrink:0;
   background:var(--bg2);
@@ -1086,7 +1086,7 @@ select,input,button,textarea{font-family:inherit;}
 
 <!-- ══ SCOREBOARD PANEL ═══════════════════════════════════════════════════ -->
 <div id="score-panel">
-  <div id="chat-topbar" style="flex-direction:column;align-items:stretch;gap:0;padding:10px 16px;">
+  <div id="score-topbar" style="flex-direction:column;align-items:stretch;gap:0;padding:10px 16px;">
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <span style="font-family:var(--fd);font-size:15px;font-weight:700;">🏆 Leaderboard</span>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -3289,8 +3289,8 @@ function initSocket() {
     }
   });
 
-  S.socket.on('leaderboard:data', ({ board }) => {
-    renderLeaderboard(board);
+  S.socket.on('leaderboard:data', ({ board, reactions }) => {
+    renderLeaderboard(board, reactions);
   });
 
   S.socket.on('score:update', ({ userId, name, scores }) => {
