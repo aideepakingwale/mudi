@@ -584,13 +584,12 @@ module.exports = {
          COALESCE(s.reactions_sent,0)  as reactions_sent,
          COALESCE(s.songs_shared,0)    as songs_shared
        FROM users u
-       LEFT JOIN user_scores s      ON s.user_id=u.id
+       INNER JOIN user_scores s ON s.user_id=u.id
        LEFT JOIN room_members rm    ON rm.user_id=u.id
        LEFT JOIN permanent_rooms pr ON pr.id=rm.room_id AND pr.code=?
-       WHERE pr.code=?
-          OR u.id IN (SELECT DISTINCT host_id FROM room_analytics WHERE room_code=?)
-       ORDER BY total_points DESC LIMIT ?`,
-      [roomCode, roomCode, roomCode, limit]
+       WHERE s.user_id IS NOT NULL
+       ORDER BY s.total_points DESC LIMIT ?`,
+      [roomCode, limit]
     );
   },
   // Chat persistence

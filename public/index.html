@@ -2084,7 +2084,12 @@ async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false
 
   // Try R2 first — fastest path (direct to Cloudflare CDN)
   try {
-    const r2Res  = await fetch('/transfer/r2/presign?' + qp, { method: 'POST' });
+    const r2Res  = await fetch('/transfer/r2/presign?' + qp, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+      });
+    if (r2Res.status === 401) throw new Error('Session expired — please reload the page');
     if (r2Res.ok) {
       const { token, putUrl } = await r2Res.json();
       console.log('[r2] uploading directly to R2', (buf.byteLength/MB).toFixed(2)+'MB');
@@ -2113,7 +2118,11 @@ async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false
       });
 
       // Tell server upload is done → server notifies listeners with download URL
-      await fetch('/transfer/r2/confirm/' + token, { method: 'POST' });
+      await fetch('/transfer/r2/confirm/' + token, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+      });
       $('prog-send-label').textContent  = '✓ Uploaded to CDN — listeners downloading...';
       $('hash-badge-send').style.display = 'inline-flex';
       console.log('[r2] upload complete, listeners notified');
@@ -2127,7 +2136,12 @@ async function sendViaRelay(buf, name, hash, startOffset = 0, compressed = false
   console.log('[pipe] streaming upload', (buf.byteLength/MB).toFixed(2)+'MB');
   $('prog-send-label').textContent = 'Uploading...';
 
-  const initRes = await fetch('/transfer/init?' + qp, { method: 'POST' });
+  const initRes = await fetch('/transfer/init?' + qp, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Accept': 'application/json' },
+  });
+  if (initRes.status === 401) throw new Error('Session expired — please reload the page');
   if (!initRes.ok) throw new Error('Transfer init failed: ' + initRes.status);
   const { token } = await initRes.json();
 
