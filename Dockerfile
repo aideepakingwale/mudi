@@ -1,18 +1,21 @@
 FROM node:20-alpine
 
-# sql.js uses pure WebAssembly — no C++ build tools needed
 WORKDIR /app
 
-# Install dependencies first (layer cache — only re-runs when package.json changes)
+# Install dependencies (cached layer — only re-runs when package.json changes)
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# Copy application source
-COPY . .
+# Copy source files explicitly — avoids Docker layer cache missing subdirectories
+COPY server.js   ./
+COPY auth.js     ./
+COPY db.js       ./
+COPY routes/     ./routes/
+COPY sockets/    ./sockets/
+COPY public/     ./public/
 
-# Create data directory for SQLite database
+# Create data directory for SQLite
 RUN mkdir -p /app/data
 
 EXPOSE 8080
-
 CMD ["node", "server.js"]

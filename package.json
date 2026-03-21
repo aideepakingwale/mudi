@@ -1,6 +1,6 @@
 {
   "name": "mudi",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "MuDi — The Digital Aux Cord. Sub-15ms synchronised audio playback over WebRTC.",
   "main": "server.js",
   "scripts": {
