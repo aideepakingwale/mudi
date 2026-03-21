@@ -383,7 +383,11 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
         db.getRoomReactions(code, 50),
       ]);
       socket.emit('leaderboard:data', { board, reactions });
-    } catch(e) { console.warn('[leaderboard]', e.message); }
+    } catch(e) {
+      console.error('[leaderboard] ERROR:', e.message, e.stack);
+      // Still emit empty board so client shows "No scores" not a blank panel
+      socket.emit('leaderboard:data', { board: [], reactions: [] });
+    }
   });
 
   // ═══════════════════════════════════════════════════════════

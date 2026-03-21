@@ -322,6 +322,27 @@ const ready = (async () => {
     CREATE INDEX IF NOT EXISTS idx_rxn_room ON reaction_log(room_code, ts DESC);
   `);
 
+  // ── Schema migrations — safe to re-run on every boot ─────────────────────
+  // ALTER TABLE ADD COLUMN throws if column exists; we catch and ignore.
+  // This handles databases restored from R2 that have the old schema.
+  const migrations = [
+    // user_scores: new columns added in v3.1
+    "ALTER TABLE user_scores ADD COLUMN word_points     INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN reply_points    INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN song_points     INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN voice_points    INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN reactions_sent  INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN messages_sent   INTEGER DEFAULT 0",
+    "ALTER TABLE user_scores ADD COLUMN songs_shared    INTEGER DEFAULT 0",
+    // rename chat_points → word_points (copy data, old column stays but unused)
+    "UPDATE user_scores SET word_points = chat_points WHERE word_points = 0 AND chat_points > 0",
+    "UPDATE user_scores SET total_points = word_points + reaction_points + reply_points + song_points + voice_points WHERE total_points = 0",
+  ];
+  for (const sql of migrations) {
+    try { _db.run(sql); } catch(e) { /* column already exists or old col absent — fine */ }
+  }
+  console.log('[db] migrations applied');
+
   // Initial persist to disk
   fs.writeFileSync(DB_PATH, Buffer.from(_db.export()));
 
