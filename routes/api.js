@@ -66,6 +66,14 @@ function registerApiRoutes(app, rooms, genCode, simpleHash, requireAuth) {
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── File audit log ────────────────────────────────────────────────────────
+  app.get('/api/file-audit', requireAuth, async (req, res) => {
+    try {
+      const data = await db.getFileAudit(req.user.id, 100);
+      res.json(data);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── PWA manifest ─────────────────────────────────────────────────────────
   app.get('/manifest.json', (_req, res) => {
     res.json({

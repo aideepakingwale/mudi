@@ -282,6 +282,23 @@ const ready = (async () => {
       ended_at           INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS file_audit (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_code       TEXT    NOT NULL,
+      room_name       TEXT,
+      host_id         INTEGER REFERENCES users(id),
+      host_name       TEXT,
+      file_name       TEXT    NOT NULL,
+      file_hash       TEXT    NOT NULL,
+      file_size_bytes INTEGER DEFAULT 0,
+      audio_duration_s REAL   DEFAULT 0,
+      transfer_mode   TEXT,
+      listener_count  INTEGER DEFAULT 0,
+      shared_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_file_audit_host ON file_audit(host_id, shared_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_file_audit_room ON file_audit(room_code, shared_at DESC);
+
     CREATE TABLE IF NOT EXISTS room_chat (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       room_code   TEXT    NOT NULL,
@@ -338,6 +355,14 @@ const ready = (async () => {
     "UPDATE user_scores SET word_points = chat_points WHERE word_points = 0 AND chat_points > 0",
     "UPDATE user_scores SET total_points = word_points + reaction_points + reply_points + song_points + voice_points WHERE total_points = 0",
   ];
+  // file_audit table (added v3.2)
+  try { _db.run(`CREATE TABLE IF NOT EXISTS file_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,room_code TEXT NOT NULL,room_name TEXT,
+    host_id INTEGER,host_name TEXT,file_name TEXT NOT NULL,file_hash TEXT NOT NULL,
+    file_size_bytes INTEGER DEFAULT 0,audio_duration_s REAL DEFAULT 0,
+    transfer_mode TEXT,listener_count INTEGER DEFAULT 0,
+    shared_at INTEGER NOT NULL DEFAULT (strftime('%s','now')))`); } catch(e) {}
+
   for (const sql of migrations) {
     try { _db.run(sql); } catch(e) { /* column already exists or old col absent — fine */ }
   }
@@ -497,6 +522,35 @@ module.exports = {
   },
 
   // Analytics
+  // File audit log
+  async logFileShared({ roomCode, roomName, hostId, hostName, fileName, fileHash,
+                         fileSize, audioDuration, transferMode, listenerCount }) {
+    _run(await _getDb(),
+      `INSERT INTO file_audit
+       (room_code,room_name,host_id,host_name,file_name,file_hash,
+        file_size_bytes,audio_duration_s,transfer_mode,listener_count)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [roomCode, roomName||null, hostId||null, hostName||null, fileName,
+       fileHash||'', fileSize||0, audioDuration||0, transferMode||'pipe', listenerCount||0]);
+  },
+
+  async getFileAudit(userId, limit=50) {
+    const d = await _getDb();
+    const hosted = _rows(d,
+      `SELECT fa.*, u.name as host_name_db FROM file_audit fa
+       LEFT JOIN users u ON u.id=fa.host_id
+       WHERE fa.host_id=? ORDER BY fa.shared_at DESC LIMIT ?`,
+      [userId, limit]);
+    const summary = _row(d,
+      `SELECT COUNT(*) as total_files,
+        SUM(file_size_bytes) as total_bytes,
+        SUM(audio_duration_s) as total_duration_s,
+        COUNT(DISTINCT room_code) as rooms_used
+       FROM file_audit WHERE host_id=?`,
+      [userId]);
+    return { hosted, summary };
+  },
+
   async startSession({ roomCode, roomName, hostId, listenerCount, fileName, fileSize, transferMode }) {
     const d = await _getDb();
     _run(d,

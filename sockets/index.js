@@ -99,7 +99,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     if (!room || !room.masterSid || hash !== room.fileHash) return;
     room.readySet.add(socket.id);
 
-    // 100 pts to host on first listener confirm
+    // 100 pts + audit log on first listener confirm
     if (room.readySet.size === 1) {
       const mSock = io.sockets.sockets.get(room.masterSid);
       const hUser = mSock?.request?.user;
@@ -109,6 +109,23 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
         db.getLeaderboard(room.code).then(board =>
           io.to(room.code).emit('leaderboard:data', { board })
         ).catch(() => {});
+      }
+      // Log to file_audit — audio duration comes from client via analytics:session-start
+      // Use room._lastFileAudit if populated, otherwise log with what we know
+      if (room._pendingAudit) {
+        db.logFileShared({
+          roomCode:      room.code,
+          roomName:      room.name,
+          hostId:        hUser?.id || null,
+          hostName:      hUser?.name || room.ownerName,
+          fileName:      room._pendingAudit.fileName,
+          fileHash:      room.fileHash,
+          fileSize:      room._pendingAudit.fileSize,
+          audioDuration: room._pendingAudit.audioDuration || 0,
+          transferMode:  room._pendingAudit.transferMode,
+          listenerCount: room.followers.size,
+        }).catch(e => console.warn('[audit]', e.message));
+        room._pendingAudit = null;
       }
     }
 
@@ -328,7 +345,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
   // ═══════════════════════════════════════════════════════════
   // ANALYTICS — session tracking, leaderboard, proom status
   // ═══════════════════════════════════════════════════════════
-  socket.on('analytics:session-start', async ({ fileName, fileSize, transferMode }) => {
+  socket.on('analytics:session-start', async ({ fileName, fileSize, transferMode, audioDuration }) => {
     const room = rooms.get(socket.data.code);
     if (!room || room.masterSid !== socket.id) return;
     try {
@@ -339,6 +356,8 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
       });
       room._sessionId    = sessionId;
       room._sessionStart = Date.now();
+      // Store for file_audit when first listener confirms
+      room._pendingAudit = { fileName, fileSize, audioDuration: audioDuration||0, transferMode };
       if (user?.id) db.incrementSessions(user.id, 'master').catch(() => {});
     } catch(e) { console.warn('[analytics]', e.message); }
   });

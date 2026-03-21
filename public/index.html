@@ -1095,29 +1095,33 @@ select,input,button,textarea{font-family:inherit;}
 
 <!-- ══ SCOREBOARD PANEL ═══════════════════════════════════════════════════ -->
 <div id="score-panel">
-  <div id="score-topbar" style="flex-direction:column;align-items:stretch;gap:0;padding:10px 16px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;">
-      <span style="font-family:var(--fd);font-size:15px;font-weight:700;">🏆 Leaderboard</span>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span id="score-last-updated" style="font-size:10px;color:var(--muted);"></span>
-        <button id="score-close" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px;">✕</button>
-      </div>
+  <!-- Slim topbar: title + close only — no legend to avoid height issues -->
+  <div style="display:flex;align-items:center;justify-content:space-between;
+    padding:12px 16px;border-bottom:1px solid var(--bdr);flex-shrink:0;
+    background:var(--bg2);">
+    <span style="font-family:var(--fd);font-size:15px;font-weight:700;">🏆 Leaderboard</span>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="score-last-updated" style="font-size:10px;color:var(--muted);"></span>
+      <button id="score-close" style="background:none;border:none;color:var(--muted);
+        font-size:20px;cursor:pointer;padding:4px;">✕</button>
     </div>
-    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">
+  </div>
+  <!-- Tabs — directly below header, always visible -->
+  <div style="display:flex;flex-shrink:0;background:var(--bg2);border-bottom:1px solid var(--bdr);">
+    <button class="score-tab active" onclick="showScoreTab('board')" id="tab-board">🏅 Rankings</button>
+    <button class="score-tab" onclick="showScoreTab('reactions')" id="tab-reactions">😊 Reactions</button>
+  </div>
+  <!-- Points legend inside scrollable area — not in header -->
+  <div style="overflow-y:auto;flex:1;display:flex;flex-direction:column;">
+    <div id="score-list" style="padding:12px 16px;flex:1;"></div>
+    <div id="reaction-log-list" style="padding:12px 16px;flex:1;display:none;"></div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;padding:8px 16px 12px;border-top:1px solid var(--bdr);flex-shrink:0;">
       <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">💬 1pt/word</span>
       <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">😊 10pts/emoji</span>
       <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">↩ 5pts/reply</span>
       <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">🎵 100pts/song</span>
       <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">🎙️ 5pts/voice</span>
     </div>
-  </div>
-  <div style="display:flex;border-bottom:1px solid var(--bdr);flex-shrink:0;background:var(--bg2);">
-    <button class="score-tab active" onclick="showScoreTab('board')" id="tab-board">🏅 Rankings</button>
-    <button class="score-tab" onclick="showScoreTab('reactions')" id="tab-reactions">😊 Reactions</button>
-  </div>
-  <div style="overflow-y:auto;flex:1;">
-    <div id="score-list" style="padding:12px 16px;"></div>
-    <div id="reaction-log-list" style="padding:12px 16px;display:none;"></div>
   </div>
 </div>
 
@@ -1139,25 +1143,37 @@ select,input,button,textarea{font-family:inherit;}
 <div class="screen" id="s-analytics">
   <button class="back-btn" id="back-analytics">← back</button>
   <div class="topbar"><span></span><span class="topbar-title">Analytics</span><span></span></div>
-  <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px;">
-    <div class="analytics-card">
-      <div class="lbl">Total Sessions Hosted</div>
-      <div id="an-sessions" style="font-family:var(--fd);font-size:32px;font-weight:700;color:var(--cyan);">—</div>
+
+  <!-- Stat summary row -->
+  <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px;">
+    <div class="analytics-card" style="text-align:center;">
+      <div class="lbl">Sessions</div>
+      <div id="an-sessions" style="font-family:var(--fd);font-size:22px;font-weight:700;color:var(--cyan);">—</div>
     </div>
-    <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
-      <div class="analytics-card">
-        <div class="lbl">Peak Listeners</div>
-        <div id="an-peak" style="font-family:var(--fd);font-size:24px;font-weight:700;color:var(--cyan);">—</div>
-      </div>
-      <div class="analytics-card">
-        <div class="lbl">Total Data Shared</div>
-        <div id="an-data" style="font-family:var(--fd);font-size:24px;font-weight:700;color:var(--cyan);">—</div>
-      </div>
+    <div class="analytics-card" style="text-align:center;">
+      <div class="lbl">Peak 👥</div>
+      <div id="an-peak" style="font-family:var(--fd);font-size:22px;font-weight:700;color:var(--cyan);">—</div>
     </div>
-    <div class="analytics-card">
-      <div class="lbl" style="margin-bottom:10px;">Recent Sessions</div>
-      <div id="an-recent" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <div class="analytics-card" style="text-align:center;">
+      <div class="lbl">Data</div>
+      <div id="an-data" style="font-family:var(--fd);font-size:22px;font-weight:700;color:var(--cyan);">—</div>
     </div>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;border-bottom:1px solid var(--bdr);flex-shrink:0;background:var(--bg2);border-radius:12px 12px 0 0;overflow:hidden;">
+    <button class="score-tab active" onclick="showAnalyticsTab('files')"  id="an-tab-files">🎵 Files</button>
+    <button class="score-tab"        onclick="showAnalyticsTab('sessions')" id="an-tab-sessions">📊 Sessions</button>
+  </div>
+
+  <!-- File audit tab -->
+  <div id="an-files-panel" style="flex:1;overflow-y:auto;">
+    <div id="an-files" style="display:flex;flex-direction:column;gap:0;"></div>
+  </div>
+
+  <!-- Sessions tab -->
+  <div id="an-sessions-panel" style="flex:1;overflow-y:auto;display:none;">
+    <div id="an-recent" style="display:flex;flex-direction:column;gap:8px;padding:12px 0;"></div>
   </div>
 </div>
 
@@ -1948,6 +1964,8 @@ function setupDC(dc) {
           $('wait-sync-msg').style.display    = 'block';
           S.socket.emit('file:ready', { hash });
           toast('File received & verified');
+          // Cache for rejoin resilience
+          saveAudioToCache(hash, meta.name, S.fileBuf).catch(()=>{});
           console.log('[DC] transfer complete, hash ok');
         } else {
           $('prog-recv-label').textContent = '✗ Hash mismatch — retransfer needed';
@@ -2771,6 +2789,12 @@ function initSocket() {
       chatHistory.forEach(msg => renderChatMsg(msg));
     }
 
+    // Check cache if host already has an active file
+    if (S.role === 'follower' && currentHost) {
+      // fileHash may be in room:joined payload if server was enhanced to send it
+      // For now we attempt cache restore on room:rejoined (more reliable)
+    }
+
     // Send display name to host
     if (_myDisplayName) {
       setTimeout(() => S.socket.emit('listener:name', { displayName: _myDisplayName }), 300);
@@ -2931,6 +2955,8 @@ function initSocket() {
 
       S.fileBuf  = finalBuf;
       S.fileName = name;
+      // Cache for rejoin resilience
+      saveAudioToCache(gotHash, name, finalBuf).catch(()=>{});
       S.fileSize = finalBuf.byteLength;
       S.fileHash = gotHash;
 
@@ -3073,6 +3099,7 @@ function initSocket() {
 
     if (S.role === 'follower') {
       // Clear ALL file state — new file will arrive, must decode fresh
+      clearAudioCache().catch(()=>{});  // old cached file no longer valid
       S.fileBuf  = null;
       S.fileHash = null;
       S.fileName = null;
@@ -3218,6 +3245,29 @@ function initSocket() {
     if (chatHistory && chatHistory.length) {
       $('chat-messages').innerHTML = '';
       chatHistory.forEach(msg => renderChatMsg(msg));
+    }
+
+    // Restore audio from cache if the server still has the same file active
+    if (S.role === 'follower' && fileHash && !S.fileBuf) {
+      loadAudioFromCache(fileHash).then(cached => {
+        if (!cached) return;
+        // Same file — restore from cache, skip retransfer
+        S.fileBuf  = cached.buf;
+        S.fileHash = cached.hash;
+        S.fileName = cached.name;
+        S.fileSize = cached.buf.byteLength;
+        $('wait-file').style.display      = 'none';
+        $('recv-block').style.display     = 'block';
+        $('recv-fname').textContent       = cached.name;
+        $('recv-fsize').textContent       = (cached.buf.byteLength/1024/1024).toFixed(2)+' MB';
+        $('prog-recv').style.width        = '100%';
+        $('hash-badge-recv').style.display = 'inline-flex';
+        $('wait-sync-msg').style.display  = 'block';
+        $('prog-recv-label').textContent  = '✓ Restored from cache';
+        // Tell host we are ready (so allReady can be satisfied)
+        S.socket.emit('file:ready', { hash: fileHash });
+        toast('🎵 File restored from cache — ready to play', TOAST_DURATION.short);
+      }).catch(()=>{});
     }
 
     if (role === 'master') {
@@ -3580,25 +3630,37 @@ document.addEventListener('DOMContentLoaded', () => {
     S.socket.emit('room:join', { code: raw.toUpperCase(), name: raw, password: pw });
   };
   $('code-input').addEventListener('keydown', e => { if(e.key==='Enter') $('btn-connect').click(); });
+  // Live check: ONLY on exact ABC-123 code format, never on partial name typing
+  // Prevents premature password prompt when room name starts with typed prefix
+  let _roomInfoTimer = null;
   $('code-input').addEventListener('input', e => {
     const val = e.target.value.trim().toUpperCase();
-    // Reset password hint when code changes
+    // Always reset hints when user is typing
     const badge = $('pw-required-badge');
     const hint  = $('pw-hint');
     const inp   = $('pw-input');
+    const err   = $('join-err');
     if (badge) badge.style.display = 'none';
     if (hint)  { hint.textContent = 'Leave blank if the room has no password'; hint.style.color = 'var(--muted)'; }
     if (inp)   { inp.placeholder = 'Leave blank if no password'; }
-    // Auto-check room info when input looks complete (code = 7 chars, name = 3+)
-    const isCode = val.length === 7 && /^[A-Z]{3}-[0-9]{3}$/.test(val);
-    const isName = val.length >= 3 && !isCode;
-    if (isCode || isName) {
+    if (err)   err.textContent = '';
+    const sub = $('join-room-name');
+    if (sub)   sub.textContent = 'Enter the code or room name from the host';
+
+    clearTimeout(_roomInfoTimer);
+
+    // Only auto-lookup on a complete ABC-123 code — never on a partial name
+    const isExactCode = val.length === 7 && /^[A-Z]{3}-[0-9]{3}$/.test(val);
+    if (!isExactCode) return;
+
+    // Small debounce so rapid typing doesn't fire multiple requests
+    _roomInfoTimer = setTimeout(() => {
+      if (!S.socket) return;
       S.socket.emit('room:info', { code: val, name: val });
       S.socket.once('room:info-res', ({ found, name, hasPassword, isFull }) => {
-        if (!found) { $('join-err').textContent = 'Room not found — check the code'; return; }
-        if (isFull) { $('join-err').textContent = 'Room is full'; return; }
-        $('join-err').textContent = '';
-        const sub = $('join-room-name');
+        if (!found) { if (err) err.textContent = 'Room not found — check the code'; return; }
+        if (isFull) { if (err) err.textContent = 'Room is full'; return; }
+        if (err) err.textContent = '';
         if (sub) sub.textContent = 'Joining: ' + name;
         if (hasPassword) {
           if (badge) badge.style.display = 'inline-flex';
@@ -3606,7 +3668,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (inp)   { inp.placeholder = 'Enter room password'; inp.focus(); }
         }
       });
-    }
+    }, 300);
   });
 
   // Room code: tap to copy
@@ -3942,6 +4004,74 @@ function replyTo(id, text, senderName) {
 function cancelReply() {
   _replyState = null;
   $('reply-banner')?.classList.remove('show');
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   AUDIO FILE CACHE  (IndexedDB — survives page reload)
+   Stores the last received audio file keyed by SHA-256 hash.
+   Only 1 file stored at a time — old entry auto-replaced.
+═══════════════════════════════════════════════════════════ */
+const AUDIO_CACHE_DB   = 'mudi-audio-cache';
+const AUDIO_CACHE_STORE = 'files';
+const AUDIO_CACHE_KEY   = 'last';   // single slot — always latest file
+
+async function _openAudioCacheDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(AUDIO_CACHE_DB, 1);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore(AUDIO_CACHE_STORE);
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function saveAudioToCache(hash, name, buf) {
+  try {
+    const db  = await _openAudioCacheDB();
+    const tx  = db.transaction(AUDIO_CACHE_STORE, 'readwrite');
+    const st  = tx.objectStore(AUDIO_CACHE_STORE);
+    st.put({ hash, name, buf, ts: Date.now() }, AUDIO_CACHE_KEY);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    db.close();
+    console.log('[cache] saved', name, (buf.byteLength/1024/1024).toFixed(1)+'MB');
+  } catch(e) {
+    console.warn('[cache] save failed:', e.message);
+  }
+}
+
+async function loadAudioFromCache(expectedHash) {
+  try {
+    const db     = await _openAudioCacheDB();
+    const tx     = db.transaction(AUDIO_CACHE_STORE, 'readonly');
+    const st     = tx.objectStore(AUDIO_CACHE_STORE);
+    const result = await new Promise((res, rej) => {
+      const req = st.get(AUDIO_CACHE_KEY);
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+    db.close();
+    if (!result) return null;
+    if (expectedHash && result.hash !== expectedHash) {
+      console.log('[cache] hash mismatch — cached:', result.hash.slice(0,8), 'expected:', expectedHash.slice(0,8));
+      return null;  // different file — don't use cache
+    }
+    console.log('[cache] hit:', result.name, (result.buf.byteLength/1024/1024).toFixed(1)+'MB');
+    return result;
+  } catch(e) {
+    console.warn('[cache] load failed:', e.message);
+    return null;
+  }
+}
+
+async function clearAudioCache() {
+  try {
+    const db = await _openAudioCacheDB();
+    const tx = db.transaction(AUDIO_CACHE_STORE, 'readwrite');
+    tx.objectStore(AUDIO_CACHE_STORE).clear();
+    db.close();
+  } catch(e) {}
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4424,36 +4554,104 @@ function shareRoom(code, name) {
 /* ═══════════════════════════════════════════════════════════
    ANALYTICS
 ═══════════════════════════════════════════════════════════ */
+function showAnalyticsTab(tab) {
+  $('an-files-panel').style.display    = tab === 'files'    ? '' : 'none';
+  $('an-sessions-panel').style.display = tab === 'sessions' ? '' : 'none';
+  $('an-tab-files')?.classList.toggle('active',    tab === 'files');
+  $('an-tab-sessions')?.classList.toggle('active', tab === 'sessions');
+}
+
+function fmtDuration(secs) {
+  if (!secs) return '—';
+  const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
+  return m > 0 ? m + 'm ' + (s ? s + 's' : '') : s + 's';
+}
+function fmtBytes(b) {
+  if (!b) return '0 MB';
+  if (b >= 1073741824) return (b/1073741824).toFixed(1) + ' GB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
 async function loadAnalytics() {
   goScreen('analytics');
+  showAnalyticsTab('files');
   try {
-    const res  = await fetch('/api/analytics');
-    const data = await res.json();
-    const s = data.summary || {};
+    const [sessRes, auditRes] = await Promise.all([
+      fetch('/api/analytics',   { credentials: 'same-origin' }),
+      fetch('/api/file-audit',  { credentials: 'same-origin' }),
+    ]);
+    const sess  = await sessRes.json();
+    const audit = await auditRes.json();
+
+    // Summary stats
+    const s = sess.summary || {};
     $('an-sessions').textContent = s.total_sessions || 0;
     $('an-peak').textContent     = s.peak_listeners  || 0;
-    $('an-data').textContent     = s.total_bytes
-      ? ((s.total_bytes / (1024*1024)).toFixed(0) + ' MB') : '0 MB';
+    $('an-data').textContent     = fmtBytes(s.total_bytes);
 
-    const recent = data.recent || [];
-    const el = $('an-recent');
-    if (!recent.length) {
-      el.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center;">No sessions yet</p>';
+    // File audit list
+    const auditEl = $('an-files');
+    const files   = audit.hosted || [];
+    if (!files.length) {
+      auditEl.innerHTML = '<p style="text-align:center;color:var(--muted);font-size:12px;padding:24px;">No files shared yet</p>';
     } else {
-      el.innerHTML = recent.map(r => {
-        const d = new Date(r.started_at * 1000);
-        const date = d.toLocaleDateString([], { month:'short', day:'numeric' });
-        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--bdr);">' +
-          '<div>' +
-            '<div style="font-size:12px;">' + escHtml(r.file_name||'—') + '</div>' +
-            '<div style="font-size:10px;color:var(--muted);">' + date + ' · ' + (r.listener_count||0) + ' listeners · ' + (r.transfer_mode||'—') + '</div>' +
+      auditEl.innerHTML = files.map(f => {
+        const dt   = new Date(f.shared_at * 1000);
+        const date = dt.toLocaleDateString([], { month:'short', day:'numeric', year:'2-digit' });
+        const time = dt.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+        const ext  = (f.file_name||'').split('.').pop().toUpperCase();
+        const dur  = fmtDuration(f.audio_duration_s);
+        const size = fmtBytes(f.file_size_bytes);
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bdr);">' +
+          '<div style="width:36px;height:36px;border-radius:8px;background:var(--surf2);border:1px solid var(--bdr);' +
+            'display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--cyan);flex-shrink:0;">' +
+            escHtml(ext) +
           '</div>' +
-          '<div style="font-size:11px;color:var(--cyan);">' + (r.session_duration_s ? Math.round(r.session_duration_s/60)+'min' : '—') + '</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              escHtml(f.file_name||'Unknown') +
+            '</div>' +
+            '<div style="font-size:10px;color:var(--muted);margin-top:2px;">' +
+              date + ' ' + time +
+              ' &middot; ' + (f.listener_count||0) + ' listener' + (f.listener_count!==1?'s':'') +
+              ' &middot; ' + dur +
+            '</div>' +
+            '<div style="font-size:10px;color:var(--muted);margin-top:1px;font-family:monospace;letter-spacing:-.02em;">' +
+              (f.file_hash ? f.file_hash.slice(0,16)+'…' : '') +
+              ' &middot; ' + size +
+              ' &middot; ' + escHtml(f.transfer_mode||'—') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // Sessions list
+    const recent = sess.recent || [];
+    const recEl  = $('an-recent');
+    if (!recent.length) {
+      recEl.innerHTML = '<p style="text-align:center;color:var(--muted);font-size:12px;padding:24px;">No sessions yet</p>';
+    } else {
+      recEl.innerHTML = recent.map(r => {
+        const d    = new Date(r.started_at * 1000);
+        const date = d.toLocaleDateString([], { month:'short', day:'numeric' });
+        return '<div style="display:flex;justify-content:space-between;align-items:center;' +
+            'padding:8px 0;border-bottom:1px solid var(--bdr);">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              escHtml(r.file_name||'—') + '</div>' +
+            '<div style="font-size:10px;color:var(--muted);">' +
+              date + ' · ' + (r.listener_count||0) + ' listeners · ' + escHtml(r.transfer_mode||'—') +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--cyan);flex-shrink:0;margin-left:8px;">' +
+            fmtDuration(r.session_duration_s) +
+          '</div>' +
         '</div>';
       }).join('');
     }
   } catch(e) {
-    toast('Analytics unavailable');
+    toast('Analytics unavailable: ' + e.message);
   }
 }
 
