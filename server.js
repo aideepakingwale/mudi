@@ -633,44 +633,104 @@ function startServer() {
       const room = rooms.get(c);
       if (!room)
         return socket.emit('room:err', { msg: 'Room not found. Check the code or name and try again.' });
-      if (room.followers.size >= MAX_LISTENERS)
-        return socket.emit('room:err', { msg: `Room is full — ${MAX_LISTENERS} listeners max.` });
       if (room.passwordHash) {
         const attempt = password ? simpleHash(password.trim()) : '';
         if (attempt !== room.passwordHash)
           return socket.emit('room:err', { msg: 'Incorrect password.' });
       }
 
-      room.followers.set(socket.id, { name: userName, displayName: userName });
-      // Add to permanent room member list if it exists
-      // Save room to DB and add user as member (enables "My Rooms" for listeners too)
       const joinUserId = socket.request?.user?.id;
+
+      // ── Ownership check: if this user created the room they rejoin as HOST ──
+      // This covers: My Rooms tap, manual code entry, or any join attempt by the owner.
+      const isRoomOwner = joinUserId && room.ownerUserId && joinUserId === room.ownerUserId;
+      const currentMasterGone = !room.masterSid ||
+        !io.sockets.sockets.get(room.masterSid)?.connected;
+
+      if (isRoomOwner) {
+        // Owner always gets host rights back — regardless of whether room:rejoin was used
+        clearTimeout(room._masterTimeout);
+
+        if (room.masterSid && !currentMasterGone && room.masterSid !== socket.id) {
+          // Someone else currently holds the host slot (aux transfer scenario)
+          // Let the owner in as a listener but mark them as owner so Reclaim button shows
+          room.followers.set(socket.id, { name: userName, displayName: userName });
+          socket.join(c);
+          socket.data.code = c;
+          socket.data.role = 'follower';
+          const chatHistory = await db.getChatHistory(c, 100).catch(() => room.chatLog || []);
+          socket.emit('room:joined', {
+            code: c, name: room.name, masterSid: room.masterSid,
+            listenerCount: room.followers.size, maxListeners: MAX_LISTENERS,
+            yourName: userName, chatHistory,
+            isOwner: true,   // ← owner flag — shows Reclaim button
+            currentHost: room.masterSid,
+          });
+          io.to(room.masterSid).emit('peer:joined', { peerSid: socket.id, listenerCount: room.followers.size });
+          io.to(c).emit('room:state', snapshot(room));
+          console.log(`[room] owner joined as listener (host slot active): "${room.name}"`);
+        } else {
+          // Host slot is free — promote owner directly to master
+          if (room.followers.has(socket.id)) room.followers.delete(socket.id);
+          room.masterSid = socket.id;
+          room.ownerSid  = socket.id;  // keep ownerSid in sync
+          socket.join(c);
+          socket.data.code = c;
+          socket.data.role = 'master';
+          const chatHistory = await db.getChatHistory(c, 100).catch(() => room.chatLog || []);
+          const followerSids = [...room.followers.keys()];
+          socket.emit('room:rejoined', {
+            code: c, name: room.name, role: 'master',
+            listenerCount: room.followers.size,
+            followerSids,
+            hasFollower:   room.followers.size > 0,
+            fileHash:      room.fileHash || null,
+            readyCount:    room.readySet.size,
+            chatHistory,
+            isOwner:       true,
+            currentHost:   socket.id,
+          });
+          // Notify existing listeners their host is back
+          for (const [sid] of room.followers)
+            io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id });
+          console.log(`[room] owner rejoined as host via room:join: "${room.name}"`);
+        }
+
+        // Persist membership
+        if (joinUserId) {
+          db.ensureRoom({ code: c, name: room.name, ownerId: joinUserId })
+            .catch(e => console.warn('[db] ensureRoom:', e.message));
+        }
+        return;
+      }
+
+      // ── Regular listener join ─────────────────────────────────────────────
+      if (room.followers.size >= MAX_LISTENERS)
+        return socket.emit('room:err', { msg: `Room is full — ${MAX_LISTENERS} listeners max.` });
+
+      room.followers.set(socket.id, { name: userName, displayName: userName });
+      socket.join(c);
+      socket.data.code = c;
+      socket.data.role = 'follower';
+
+      // Save room + add member to DB
       if (joinUserId) {
         db.ensureRoom({ code: c, name: room.name, ownerId: null })
           .then(() => db.addRoomMember(c, joinUserId))
           .catch(e => console.warn('[db] join room member:', e.message));
       }
-      socket.join(c);
-      socket.data.code = c;
-      socket.data.role = 'follower';
 
-      // Load chat history from DB for this room
       const chatHistory = await db.getChatHistory(c, 100).catch(() => room.chatLog || []);
       socket.emit('room:joined', {
         code: c, name: room.name, masterSid: room.masterSid,
         listenerCount: room.followers.size, maxListeners: MAX_LISTENERS,
-        yourName: userName,
-        chatHistory,
+        yourName: userName, chatHistory,
         isOwner:     false,
         currentHost: room.masterSid,
       });
 
-      if (room.masterSid) {
-        // Master is connected — notify immediately
+      if (room.masterSid)
         io.to(room.masterSid).emit('peer:joined', { peerSid: socket.id, listenerCount: room.followers.size });
-      }
-      // Always broadcast room:state — master receives this and can navigate
-      // even if peer:joined was missed (e.g. master was mid-reconnect)
       io.to(c).emit('room:state', snapshot(room));
     });
 
