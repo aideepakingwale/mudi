@@ -282,16 +282,44 @@ const ready = (async () => {
       ended_at           INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS room_chat (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_code   TEXT    NOT NULL,
+      sid         TEXT,
+      sender_name TEXT,
+      role        TEXT,
+      text        TEXT    NOT NULL,
+      reply_to_id INTEGER,
+      reply_text  TEXT,
+      reply_sender TEXT,
+      ts          INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_room ON room_chat(room_code, id);
+
     CREATE TABLE IF NOT EXISTS user_scores (
       user_id           INTEGER PRIMARY KEY REFERENCES users(id),
-      chat_points       INTEGER DEFAULT 0,
+      word_points       INTEGER DEFAULT 0,
       reaction_points   INTEGER DEFAULT 0,
-      session_points    INTEGER DEFAULT 0,
+      reply_points      INTEGER DEFAULT 0,
+      song_points       INTEGER DEFAULT 0,
+      voice_points      INTEGER DEFAULT 0,
       total_points      INTEGER DEFAULT 0,
       sessions_hosted   INTEGER DEFAULT 0,
       sessions_joined   INTEGER DEFAULT 0,
+      reactions_sent    INTEGER DEFAULT 0,
+      messages_sent     INTEGER DEFAULT 0,
+      songs_shared      INTEGER DEFAULT 0,
       updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
+    CREATE TABLE IF NOT EXISTS reaction_log (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_code TEXT    NOT NULL,
+      user_id   INTEGER REFERENCES users(id),
+      user_name TEXT,
+      emoji     TEXT    NOT NULL,
+      ts        INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rxn_room ON reaction_log(room_code, ts DESC);
   `);
 
   // Initial persist to disk
@@ -383,6 +411,29 @@ module.exports = {
   },
 
   // Permanent rooms
+  // Upsert: creates if missing, updates last_active if exists
+  // Used automatically when host creates/joins any room — no manual step needed
+  async ensureRoom({ code, name, ownerId, passwordHash = null }) {
+    const d = await _getDb();
+    _run(d,
+      `INSERT OR IGNORE INTO permanent_rooms (code,name,owner_id,password_hash,has_password)
+       VALUES (?,?,?,?,?)`,
+      [code, name, ownerId || null, passwordHash, passwordHash ? 1 : 0]
+    );
+    _run(d,
+      `UPDATE permanent_rooms SET last_active=strftime('%s','now') WHERE code=?`,
+      [code]
+    );
+    if (ownerId) {
+      _run(d,
+        `INSERT OR IGNORE INTO room_members (room_id,user_id)
+         SELECT id,? FROM permanent_rooms WHERE code=?`,
+        [ownerId, code]
+      );
+    }
+    return _row(d, 'SELECT * FROM permanent_rooms WHERE code=?', [code]);
+  },
+
   async createPermanentRoom({ code, name, ownerId, passwordHash = null }) {
     const d = await _getDb();
     _run(d,
@@ -409,8 +460,9 @@ module.exports = {
   async addRoomMember(code, userId) {
     if (!userId) return;
     const d = await _getDb();
+    // Create room record if not already there (happens for rooms created before this feature)
     const room = _row(d, 'SELECT id FROM permanent_rooms WHERE code=?', [code]);
-    if (!room) return;
+    if (!room) return; // room info not available here, caller should use ensureRoom
     _run(d, `INSERT OR IGNORE INTO room_members (room_id,user_id) VALUES (?,?)`,
       [room.id, userId]);
     _run(d, `UPDATE permanent_rooms SET last_active=strftime('%s','now') WHERE code=?`, [code]);
@@ -459,9 +511,11 @@ module.exports = {
 
   // Scores
   async addPoints(userId, type, amount = 1) {
-    const col = type === 'chat'     ? 'chat_points'
-              : type === 'reaction' ? 'reaction_points'
-              : 'session_points';
+    const colMap = {
+      word:'word_points', reaction:'reaction_points', reply:'reply_points',
+      song:'song_points', voice:'voice_points', session:'word_points',
+    };
+    const col = colMap[type] || 'word_points';
     _run(await _getDb(),
       `INSERT INTO user_scores (user_id,${col},total_points,updated_at)
        VALUES (?,?,?,strftime('%s','now'))
@@ -469,8 +523,27 @@ module.exports = {
          ${col}=${col}+excluded.${col},
          total_points=total_points+excluded.total_points,
          updated_at=strftime('%s','now')`,
-      [userId, amount, amount]
-    );
+      [userId, amount, amount]);
+  },
+
+  async addReactionLog(roomCode, userId, userName, emoji) {
+    _run(await _getDb(),
+      `INSERT INTO reaction_log (room_code,user_id,user_name,emoji) VALUES (?,?,?,?)`,
+      [roomCode, userId||null, userName||null, emoji]);
+  },
+  async getRoomReactions(roomCode, limit=50) {
+    return _rows(await _getDb(),
+      `SELECT id,user_name as userName,emoji,ts FROM reaction_log
+       WHERE room_code=? ORDER BY ts DESC LIMIT ?`,
+      [roomCode, limit]);
+  },
+  async incrementCounter(userId, col) {
+    const safe = ['reactions_sent','messages_sent','songs_shared','sessions_hosted','sessions_joined'];
+    if (!safe.includes(col)) return;
+    _run(await _getDb(),
+      `INSERT INTO user_scores (user_id,${col},updated_at) VALUES (?,1,strftime('%s','now'))
+       ON CONFLICT(user_id) DO UPDATE SET ${col}=${col}+1, updated_at=strftime('%s','now')`,
+      [userId]);
   },
   async incrementSessions(userId, role) {
     const col = role === 'master' ? 'sessions_hosted' : 'sessions_joined';
@@ -482,13 +555,18 @@ module.exports = {
       [userId]
     );
   },
-  async getLeaderboard(roomCode, limit = 10) {
+  async getLeaderboard(roomCode, limit = 20) {
     return _rows(await _getDb(),
       `SELECT u.id, u.name, u.avatar,
-         COALESCE(s.chat_points,0)     as chat_points,
+         COALESCE(s.word_points,0)     as word_points,
          COALESCE(s.reaction_points,0) as reaction_points,
-         COALESCE(s.session_points,0)  as session_points,
-         COALESCE(s.total_points,0)    as total_points
+         COALESCE(s.reply_points,0)    as reply_points,
+         COALESCE(s.song_points,0)     as song_points,
+         COALESCE(s.voice_points,0)    as voice_points,
+         COALESCE(s.total_points,0)    as total_points,
+         COALESCE(s.messages_sent,0)   as messages_sent,
+         COALESCE(s.reactions_sent,0)  as reactions_sent,
+         COALESCE(s.songs_shared,0)    as songs_shared
        FROM users u
        LEFT JOIN user_scores s      ON s.user_id=u.id
        LEFT JOIN room_members rm    ON rm.user_id=u.id
@@ -499,6 +577,24 @@ module.exports = {
       [roomCode, roomCode, roomCode, limit]
     );
   },
+  // Chat persistence
+  async saveChat(roomCode, { sid, senderName, role, text, replyToId, replyText, replySender }) {
+    const d = await _getDb();
+    _run(d,
+      `INSERT INTO room_chat (room_code,sid,sender_name,role,text,reply_to_id,reply_text,reply_sender)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [roomCode, sid||null, senderName||null, role||null, text,
+       replyToId||null, replyText||null, replySender||null]);
+    return d.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+  },
+  async getChatHistory(roomCode, limit=100) {
+    return _rows(await _getDb(),
+      `SELECT id,sid,sender_name as senderName,role,text,reply_to_id as replyToId,
+              reply_text as replyText,reply_sender as replySender,ts
+       FROM room_chat WHERE room_code=? ORDER BY id DESC LIMIT ?`,
+      [roomCode, limit]).reverse();
+  },
+
   async getUserScore(userId) {
     return _row(await _getDb(),
       'SELECT * FROM user_scores WHERE user_id=?', [userId])

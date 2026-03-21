@@ -472,6 +472,16 @@ function startServer() {
   io.engine.use(passport.initialize());
   io.engine.use(passport.session());
 
+  // Periodic leaderboard broadcast every 30s
+  setInterval(async () => {
+    for (const [code] of rooms) {
+      try {
+        const board = await db.getLeaderboard(code, 20);
+        io.to(code).emit('leaderboard:data', { board });
+      } catch(e) {}
+    }
+  }, 30_000);
+
   // ═══════════════════════════════════════════════════════════════════════════
   //  ROOM STATE
   // ═══════════════════════════════════════════════════════════════════════════
@@ -523,12 +533,51 @@ function startServer() {
     });
 
     // ── Room: create ────────────────────────────────────────────────────────
-    socket.on('room:create', ({ name, password } = {}) => {
+    socket.on('room:create', async ({ name, password } = {}) => {
       const roomName = (name || '').trim().slice(0, 32) || `Room ${Math.floor(Math.random() * 9000) + 1000}`;
       const lc       = roomName.toLowerCase();
 
-      if (nameIndex.has(lc))
-        return socket.emit('room:err', { msg: `"${roomName}" is already taken. Choose another name.` });
+      if (nameIndex.has(lc)) {
+        // Room with this name exists — check if this user is the owner
+        const existingCode = nameIndex.get(lc);
+        const existingRoom = rooms.get(existingCode);
+        if (existingRoom) {
+          const userId = socket.request?.user?.id;
+          const userIsOwner = userId && existingRoom.ownerUserId === userId;
+          const noMaster    = !existingRoom.masterSid;
+          const oldSocket   = existingRoom.masterSid
+            ? io.sockets.sockets.get(existingRoom.masterSid) : null;
+          const masterGone  = !oldSocket || !oldSocket.connected;
+
+          if (userIsOwner || (noMaster && masterGone)) {
+            // Owner is reclaiming their room after disconnect — rejoin it
+            clearTimeout(existingRoom._masterTimeout);
+            existingRoom.masterSid = socket.id;
+            existingRoom.ownerSid  = socket.id;
+            socket.join(existingCode);
+            socket.data.code = existingCode;
+            socket.data.role = 'master';
+            const chatHistory = await db.getChatHistory(existingCode, 100).catch(() => existingRoom.chatLog || []);
+            socket.emit('room:rejoined', {
+              code: existingCode, name: existingRoom.name, role: 'master',
+              listenerCount: existingRoom.followers.size,
+              followerSids:  [...existingRoom.followers.keys()],
+              hasFollower:   existingRoom.followers.size > 0,
+              fileHash:      existingRoom.fileHash || null,
+              readyCount:    existingRoom.readySet.size,
+              chatHistory,
+              isOwner:       true,
+              currentHost:   socket.id,
+            });
+            [...existingRoom.followers.keys()].forEach(sid =>
+              io.to(sid).emit('peer:rejoined', { role: 'master', peerSid: socket.id })
+            );
+            console.log('[room] owner reclaimed via room:create:', existingRoom.name);
+            return; // handled
+          }
+        }
+        return socket.emit('room:err', { msg: `"${roomName}" is already in use. Choose another name.` });
+      }
 
       let code;
       do { code = genCode(); } while (rooms.has(code));
@@ -538,6 +587,7 @@ function startServer() {
         masterSid:      socket.id,   // current active host socket
         ownerSid:       socket.id,   // original creator — can always reclaim
         ownerName:      userName,
+        ownerUserId:    socket.request?.user?.id || null,
         followers:      new Map(),
         readySet:       new Set(),
         passwordHash:   password ? simpleHash(password.trim()) : null,
@@ -554,6 +604,14 @@ function startServer() {
 
       socket.emit('room:created', { code, name: roomName, hasPassword: !!password, maxListeners: MAX_LISTENERS, isOwner: true });
       console.log(`[room] created "${roomName}" (${code})`);
+      // Auto-save to DB so host can always find this room in My Rooms
+      const userId = socket.request?.user?.id;
+      if (userId) {
+        db.ensureRoom({
+          code, name: roomName, ownerId: userId,
+          passwordHash: password ? simpleHash(password.trim()) : null,
+        }).catch(e => console.warn('[db] ensureRoom failed:', e.message));
+      }
     });
 
     // ── Room: check name ────────────────────────────────────────────────────
@@ -564,7 +622,7 @@ function startServer() {
     );
 
     // ── Room: join ──────────────────────────────────────────────────────────
-    socket.on('room:join', ({ code, name, password }) => {
+    socket.on('room:join', async ({ code, name, password }) => {
       // Resolve by code first, then by room name
       let c = (code || '').toUpperCase().trim();
       if (!rooms.has(c) && name) {
@@ -585,18 +643,26 @@ function startServer() {
 
       room.followers.set(socket.id, { name: userName, displayName: userName });
       // Add to permanent room member list if it exists
-      db.addRoomMember(c, socket.request?.user?.id).catch(()=>{});
+      // Save room to DB and add user as member (enables "My Rooms" for listeners too)
+      const joinUserId = socket.request?.user?.id;
+      if (joinUserId) {
+        db.ensureRoom({ code: c, name: room.name, ownerId: null })
+          .then(() => db.addRoomMember(c, joinUserId))
+          .catch(e => console.warn('[db] join room member:', e.message));
+      }
       socket.join(c);
       socket.data.code = c;
       socket.data.role = 'follower';
 
+      // Load chat history from DB for this room
+      const chatHistory = await db.getChatHistory(c, 100).catch(() => room.chatLog || []);
       socket.emit('room:joined', {
         code: c, name: room.name, masterSid: room.masterSid,
         listenerCount: room.followers.size, maxListeners: MAX_LISTENERS,
         yourName: userName,
-        chatHistory:   room.chatLog || [],
-        isOwner:       false,
-        currentHost:   room.masterSid,
+        chatHistory,
+        isOwner:     false,
+        currentHost: room.masterSid,
       });
 
       if (room.masterSid) {
@@ -696,6 +762,18 @@ function startServer() {
       const room = rooms.get(socket.data.code);
       if (!room || !room.masterSid || hash !== room.fileHash) return;
       room.readySet.add(socket.id);
+      // 100 pts to host when first listener confirms download
+      if (room.readySet.size === 1 && room.masterSid) {
+        const mSock = io.sockets.sockets.get(room.masterSid);
+        const hUser = mSock?.request?.user;
+        if (hUser?.id) {
+          db.addPoints(hUser.id, 'song', 100).catch(()=>{});
+          db.incrementCounter(hUser.id, 'songs_shared').catch(()=>{});
+          db.getLeaderboard(room.code).then(board =>
+            io.to(room.code).emit('leaderboard:data', { board })
+          ).catch(()=>{});
+        }
+      }
       const snap = snapshot(room);
       io.to(room.masterSid).emit('file:ready', {
         peerSid: socket.id, readyCount: snap.readyCount,
@@ -755,7 +833,33 @@ function startServer() {
     });
 
     // ── Room chat ─────────────────────────────────────────────────────────────
-    socket.on('chat:send', async ({ text }) => {
+    socket.on('chat:voice', async ({ data, duration, systemAudio, replyToId, replyText, replySender }) => {
+      const code = socket.data.code;
+      const room = rooms.get(code);
+      if (!room || !data) return;
+      const user = socket.request?.user;
+      const follower = room.followers.get(socket.id);
+      const senderName = follower?.displayName || follower?.name || (user?.name || 'Guest');
+      const role = room.masterSid === socket.id ? 'master' : 'follower';
+      const payload = {
+        sid: socket.id, senderName, role, ts: Date.now(),
+        voiceData: data, duration, systemAudio: !!systemAudio,
+        replyToId: replyToId||null, replyText: replyText||null, replySender: replySender||null,
+        text: systemAudio ? '[System audio]' : '[Voice message]',
+      };
+      io.to(code).emit('chat:message', payload);
+      const logEntry = { ...payload, voiceData: undefined, text: payload.text };
+      room.chatLog.push(logEntry);
+      if (room.chatLog.length > 100) room.chatLog.shift();
+      db.saveChat(code, { sid: socket.id, senderName, role, text: logEntry.text }).catch(()=>{});
+      if (user?.id) {
+        db.addPoints(user.id, 'voice', 5).catch(()=>{});
+        const board = await db.getLeaderboard(code).catch(()=>[]);
+        io.to(code).emit('leaderboard:data', { board });
+      }
+    });
+
+    socket.on('chat:send', async ({ text, replyToId: rToId, replyText: rText, replySender: rSender }) => {
       const code = socket.data.code;
       const room = rooms.get(code);
       if (!room || !text) return;
@@ -765,17 +869,29 @@ function startServer() {
       const senderName = (room.followers.get(socket.id)?.displayName)
         || (room.masterSid === socket.id ? (user?.name || 'Host') : (user?.name || 'Listener'));
       const role    = room.masterSid === socket.id ? 'master' : 'follower';
-      const payload = { sid: socket.id, senderName, role, text: msg, ts: Date.now() };
+      const replyToId   = typeof rToId === 'number' ? rToId : null;
+      const replyText   = rText   || null;
+      const replySender = rSender || null;
+      const payload = {
+        sid: socket.id, senderName, role, text: msg,
+        ts: Date.now(),
+        replyToId, replyText, replySender,
+      };
       io.to(code).emit('chat:message', payload);
-      // Keep last 100 messages in room memory for late-joiners
       room.chatLog.push(payload);
       if (room.chatLog.length > 100) room.chatLog.shift();
-      // Award points
+      // Persist to DB (non-blocking)
+      db.saveChat(room.code, { sid: socket.id, senderName, role, text: msg, replyToId, replyText, replySender })
+        .then(id => { payload.id = id; })
+        .catch(e => console.warn('[chat] DB save failed:', e.message));
       if (user?.id) {
-        db.addPoints(user.id, 'chat', 1).catch(() => {});
-        // Update scoreboard for room
-        const scores = await db.getUserScore(user.id).catch(() => ({}));
-        io.to(code).emit('score:update', { userId: user.id, name: senderName, scores });
+        const wordCount  = msg.trim().split(/\s+/).filter(Boolean).length;
+        const replyBonus = replyToId ? 5 : 0;
+        if (wordCount)   db.addPoints(user.id, 'word', wordCount).catch(()=>{});
+        if (replyBonus)  db.addPoints(user.id, 'reply', replyBonus).catch(()=>{});
+        db.incrementCounter(user.id, 'messages_sent').catch(()=>{});
+        const board = await db.getLeaderboard(code).catch(()=>[]);
+        io.to(code).emit('leaderboard:data', { board });
       }
     });
 
@@ -791,10 +907,22 @@ function startServer() {
         || (user?.name || 'Someone');
       io.to(code).emit('reaction:broadcast', { emoji, senderName, sid: socket.id, ts: Date.now() });
       if (user?.id) {
-        db.addPoints(user.id, 'reaction', 1).catch(() => {});
-        const scores = await db.getUserScore(user.id).catch(() => ({}));
-        io.to(code).emit('score:update', { userId: user.id, name: senderName, scores });
+        db.addPoints(user.id, 'reaction', 10).catch(()=>{});
+        db.incrementCounter(user.id, 'reactions_sent').catch(()=>{});
+        db.addReactionLog(code, user.id, senderName, emoji).catch(()=>{});
+        const board = await db.getLeaderboard(code).catch(()=>[]);
+        io.to(code).emit('leaderboard:data', { board });
       }
+      // Log reaction in chat history
+      const rxnChatMsg = {
+        sid: socket.id, senderName, role: socket.data.role||'follower',
+        text: senderName + ' reacted ' + emoji, ts: Date.now(),
+        isReaction: true, emoji,
+      };
+      room.chatLog.push(rxnChatMsg);
+      if (room.chatLog.length > 100) room.chatLog.shift();
+      db.saveChat(code, { sid: socket.id, senderName, role: socket.data.role||'follower',
+        text: rxnChatMsg.text }).catch(()=>{});
     });
 
     // ── Seek request (listener → host) ───────────────────────────────────────
@@ -999,8 +1127,11 @@ function startServer() {
       const code = socket.data.code;
       if (!code) return;
       try {
-        const board = await db.getLeaderboard(code, 20);
-        socket.emit('leaderboard:data', { board });
+        const [board, reactions] = await Promise.all([
+          db.getLeaderboard(code, 20),
+          db.getRoomReactions(code, 50),
+        ]);
+        socket.emit('leaderboard:data', { board, reactions });
       } catch(e) { console.warn('[leaderboard]', e.message); }
     });
 

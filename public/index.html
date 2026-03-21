@@ -320,6 +320,50 @@ select,input,button,textarea{font-family:inherit;}
 .chat-msg.mine .chat-bubble{background:var(--cyan);color:#000;}
 .chat-msg.theirs .chat-bubble{background:var(--surf2);color:var(--white);border:1px solid var(--bdr);}
 .chat-msg-meta{font-size:10px;color:var(--muted);}
+.audio-msg{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;
+  background:var(--surf2);border-radius:12px;border:1px solid var(--bdr);
+  min-width:180px;cursor:pointer;
+}
+.audio-msg-icon{font-size:20px;flex-shrink:0;}
+.audio-waveform{flex:1;height:28px;background:linear-gradient(to right,
+  var(--cyan) 0%,var(--cyan) var(--pct,40%),var(--bdr) var(--pct,40%));
+  border-radius:4px;cursor:pointer;}
+.audio-msg-dur{font-size:10px;color:var(--muted);flex-shrink:0;}
+#voice-btn{
+  background:none;border:none;font-size:20px;cursor:pointer;
+  padding:6px;border-radius:50%;-webkit-tap-highlight-color:transparent;
+  transition:background .15s;flex-shrink:0;
+}
+#voice-btn.recording{background:rgba(226,75,74,.2);animation:blink 0.8s step-end infinite;}
+#sysaudio-btn{
+  background:none;border:none;font-size:18px;cursor:pointer;
+  padding:6px;border-radius:50%;-webkit-tap-highlight-color:transparent;
+  flex-shrink:0;
+}
+#sysaudio-btn.active{color:var(--cyan);}
+.chat-reply-bar{
+  display:flex;align-items:center;gap:8px;padding:6px 12px;
+  background:var(--surf);border-left:3px solid var(--cyan);
+  border-radius:0 8px 8px 0;margin-bottom:2px;font-size:11px;
+}
+.chat-reply-name{color:var(--cyan);font-weight:600;}
+.chat-reply-text{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;}
+.chat-reply-preview{
+  border-left:2px solid rgba(0,173,181,.4);padding:3px 6px;
+  background:rgba(0,173,181,.06);border-radius:4px;
+  font-size:10px;color:var(--muted);margin-bottom:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#reply-banner{
+  display:none;align-items:center;gap:8px;
+  padding:6px 12px;background:var(--surf);border-top:1px solid var(--bdr);
+  font-size:11px;flex-shrink:0;
+}
+#reply-banner.show{display:flex;}
+#reply-name{color:var(--cyan);font-weight:600;}
+#reply-text{color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#reply-cancel{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:0 4px;}
 .host-tag{font-size:9px;background:var(--cdim);color:var(--cyan);padding:1px 6px;border-radius:99px;border:1px solid var(--bdr);}
 #chat-input-row{
   display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--bdr);
@@ -995,9 +1039,18 @@ select,input,button,textarea{font-family:inherit;}
     </div>
   </div>
   <div id="chat-messages"></div>
+  <div id="reply-banner">
+    <div style="flex:1;overflow:hidden;">
+      Replying to <span id="reply-name"></span>:
+      <span id="reply-text"></span>
+    </div>
+    <button id="reply-cancel" onclick="cancelReply()">✕</button>
+  </div>
   <div id="chat-input-row">
+    <button id="voice-btn" title="Hold to record voice" ontouchstart="startVoiceRecord(event)" ontouchend="stopVoiceRecord(event)" onmousedown="startVoiceRecord(event)" onmouseup="stopVoiceRecord(event)">🎙️</button>
     <input id="chat-input" type="text" placeholder="Message..." maxlength="280"
       autocomplete="off">
+    <button id="sysaudio-btn" onclick="toggleSystemAudio()" title="Share system/screen audio">🎚️</button>
     <button class="chat-send-btn" id="chat-send-btn">➤</button>
   </div>
 </div>
@@ -1033,16 +1086,29 @@ select,input,button,textarea{font-family:inherit;}
 
 <!-- ══ SCOREBOARD PANEL ═══════════════════════════════════════════════════ -->
 <div id="score-panel">
-  <div id="chat-topbar">
-    <span style="font-family:var(--fd);font-size:15px;font-weight:700;">🏆 Leaderboard</span>
-    <button id="score-close" style="background:none;border:none;color:var(--muted);
-      font-size:20px;cursor:pointer;padding:4px;">✕</button>
+  <div id="chat-topbar" style="flex-direction:column;align-items:stretch;gap:0;padding:10px 16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-family:var(--fd);font-size:15px;font-weight:700;">🏆 Leaderboard</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="score-last-updated" style="font-size:10px;color:var(--muted);"></span>
+        <button id="score-close" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px;">✕</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">
+      <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">💬 1pt/word</span>
+      <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">😊 10pts/emoji</span>
+      <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">↩ 5pts/reply</span>
+      <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">🎵 100pts/song</span>
+      <span style="font-size:10px;background:var(--surf);border:1px solid var(--bdr);border-radius:20px;padding:2px 8px;color:var(--muted);">🎙️ 5pts/voice</span>
+    </div>
   </div>
-  <div style="padding:16px;overflow-y:auto;flex:1;">
-    <div id="score-list"></div>
-    <p style="font-size:11px;color:var(--muted);text-align:center;margin-top:16px;">
-      Points: 1pt per chat message · 1pt per reaction · 5pts per session
-    </p>
+  <div style="display:flex;border-bottom:1px solid var(--bdr);flex-shrink:0;">
+    <button class="ep-tab active" onclick="showScoreTab('board')" id="tab-board">Rankings</button>
+    <button class="ep-tab" onclick="showScoreTab('reactions')" id="tab-reactions">Reactions</button>
+  </div>
+  <div style="overflow-y:auto;flex:1;">
+    <div id="score-list" style="padding:12px 16px;"></div>
+    <div id="reaction-log-list" style="padding:12px 16px;display:none;"></div>
   </div>
 </div>
 
@@ -1479,7 +1545,7 @@ window.addEventListener('unhandledrejection', e => {
    SCREEN NAVIGATION
 ═══════════════════════════════════════════════════════════ */
 let curScreen = 'home';
-function goScreen(name) {
+function goScreen(name, { skipHistory = false } = {}) {
   const from = $('s-' + curScreen);
   const to   = $('s-' + name);
   if (from === to) return;
@@ -1488,6 +1554,10 @@ function goScreen(name) {
   setTimeout(() => from?.classList.remove('exit'), 320);
   to?.classList.add('active');
   curScreen = name;
+  // Push browser history so native back button works inside the app
+  if (!skipHistory) {
+    history.pushState({ screen: name }, '', '#' + name);
+  }
 
   // Show chat FAB only in room/player, hide elsewhere
   const fab = $('chat-fab');
@@ -1501,6 +1571,58 @@ function goScreen(name) {
   const rxnRow = $('rxn-toggle-row');
   if (rxnRow) rxnRow.style.display = name === 'player' ? 'flex' : 'none';
 }
+
+/* Back button intercept */
+window.addEventListener('popstate', (e) => {
+  const target = e.state?.screen || 'home';
+  // Safe screens we can go back to without disconnecting
+  const safeNav = {
+    player:    'room',
+    room:      null,   // handled below
+    host:      null,
+    join:      'home',
+    create:    'home',
+    prooms:    'home',
+    analytics: 'home',
+  };
+
+  if (target === 'home' || target === 'join' || target === 'create') {
+    // These are safe — just navigate
+    goScreen(target, { skipHistory: true });
+    return;
+  }
+
+  if (curScreen === 'player') {
+    // Player → Room: safe, never disconnects
+    goScreen('room', { skipHistory: true });
+    history.pushState({ screen: 'room' }, '', '#room');
+    return;
+  }
+
+  if (curScreen === 'room' || curScreen === 'host') {
+    // Would disconnect — confirm first, push state back so we stay
+    const msg = S.role === 'master'
+      ? 'Leave room? This will stop playback for all listeners.'
+      : 'Leave room?';
+    if (confirm(msg)) {
+      if (S.role === 'master' && S.socket) S.socket.emit('sync:stop');
+      stopAudio(); clearSession();
+      if (S.socket) { S.socket.emit('room:leave'); setTimeout(() => location.reload(), 300); }
+    } else {
+      // User cancelled — restore current screen in history
+      history.pushState({ screen: curScreen }, '', '#' + curScreen);
+    }
+    return;
+  }
+
+  // Default: go home
+  goScreen('home', { skipHistory: true });
+});
+
+// Set initial history state on load
+window.addEventListener('DOMContentLoaded', () => {
+  history.replaceState({ screen: 'home' }, '', '#home');
+});
 
 /* ═══════════════════════════════════════════════════════════
    NTP — 4-STEP HANDSHAKE
@@ -3614,6 +3736,153 @@ function applyAuxRoleChange(newRole, isOwner, extraInfo) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   VOICE RECORDING & SYSTEM AUDIO
+═══════════════════════════════════════════════════════════ */
+let _voiceRecorder  = null;
+let _voiceChunks    = [];
+let _voiceStartTime = 0;
+let _sysAudioStream = null;
+let _sysAudioRecorder = null;
+let _sysAudioChunks   = [];
+let _replyState = null;  // { id, text, senderName }
+
+// ── Voice message ──
+async function startVoiceRecord(e) {
+  e.preventDefault();
+  if (_voiceRecorder) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _voiceChunks  = [];
+    _voiceStartTime = Date.now();
+    _voiceRecorder = new MediaRecorder(stream);
+    _voiceRecorder.ondataavailable = ev => _voiceChunks.push(ev.data);
+    _voiceRecorder.start();
+    const btn = $('voice-btn');
+    if (btn) btn.classList.add('recording');
+    toast('Recording... release to send', TOAST_DURATION.short);
+  } catch(e) {
+    toast('Microphone access denied');
+  }
+}
+
+async function stopVoiceRecord(e) {
+  if (!_voiceRecorder) return;
+  e.preventDefault();
+  _voiceRecorder.stop();
+  _voiceRecorder.stream.getTracks().forEach(t => t.stop());
+  const btn = $('voice-btn');
+  if (btn) btn.classList.remove('recording');
+
+  const dur = ((Date.now() - _voiceStartTime) / 1000).toFixed(1);
+  if (parseFloat(dur) < 0.5) {
+    _voiceRecorder = null;
+    toast('Hold longer to record', TOAST_DURATION.short);
+    return;
+  }
+
+  await new Promise(r => setTimeout(r, 100)); // wait for ondataavailable
+  const blob    = new Blob(_voiceChunks, { type: 'audio/webm' });
+  const reader  = new FileReader();
+  reader.onload = () => {
+    const b64 = reader.result.split(',')[1];
+    if (S.socket) {
+      S.socket.emit('chat:voice', {
+        data: b64,
+        duration: dur,
+        replyToId:   _replyState?.id   || null,
+        replyText:   _replyState?.text  || null,
+        replySender: _replyState?.senderName || null,
+      });
+      cancelReply();
+    }
+  };
+  reader.readAsDataURL(blob);
+  _voiceRecorder = null;
+}
+
+// ── System / screen audio ──
+async function toggleSystemAudio() {
+  const btn = $('sysaudio-btn');
+  if (_sysAudioStream) {
+    // Stop sharing
+    _sysAudioStream.getTracks().forEach(t => t.stop());
+    _sysAudioStream = null;
+    if (_sysAudioRecorder) { _sysAudioRecorder.stop(); _sysAudioRecorder = null; }
+    if (btn) btn.classList.remove('active');
+    toast('System audio sharing stopped', TOAST_DURATION.short);
+    return;
+  }
+  try {
+    // getDisplayMedia with systemAudio — supported in Chrome 105+
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: false,
+      audio: { systemAudio: 'include', echoCancellation: false, noiseSuppression: false },
+    });
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length) {
+      stream.getTracks().forEach(t => t.stop());
+      toast('No audio track captured. Make sure to select "Share system audio" in the dialog.');
+      return;
+    }
+    _sysAudioStream = stream;
+    if (btn) btn.classList.add('active');
+    toast('System audio sharing active — will send as voice message', TOAST_DURATION.short);
+
+    // Record in 30s chunks and send each as a voice message
+    function startChunk() {
+      if (!_sysAudioStream) return;
+      _sysAudioChunks  = [];
+      _sysAudioRecorder = new MediaRecorder(new MediaStream(audioTracks));
+      _sysAudioRecorder.ondataavailable = ev => _sysAudioChunks.push(ev.data);
+      _sysAudioRecorder.onstop = () => {
+        const blob   = new Blob(_sysAudioChunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onload = () => {
+          const b64 = reader.result.split(',')[1];
+          if (S.socket && b64) {
+            S.socket.emit('chat:voice', { data: b64, duration: '30.0', systemAudio: true });
+          }
+        };
+        reader.readAsDataURL(blob);
+        if (_sysAudioStream) startChunk(); // next chunk
+      };
+      _sysAudioRecorder.start();
+      setTimeout(() => { if (_sysAudioRecorder?.state === 'recording') _sysAudioRecorder.stop(); }, 30000);
+    }
+    stream.getTracks()[0].onended = () => {
+      _sysAudioStream = null;
+      if (btn) btn.classList.remove('active');
+    };
+    startChunk();
+  } catch(e) {
+    if (e.name !== 'AbortError') toast('System audio: ' + e.message);
+  }
+}
+
+// ── Reply logic ──
+function handleReplyBtn(btn) {
+  const id     = parseInt(btn.dataset.id) || 0;
+  const text   = btn.dataset.text || '';
+  const sender = btn.dataset.sender || '';
+  replyTo(id, text, sender);
+}
+
+function replyTo(id, text, senderName) {
+  _replyState = { id, text, senderName };
+  const banner = $('reply-banner');
+  if (banner) banner.classList.add('show');
+  const rn = $('reply-name'), rt = $('reply-text');
+  if (rn) rn.textContent = senderName;
+  if (rt) rt.textContent = text;
+  $('chat-input')?.focus();
+}
+
+function cancelReply() {
+  _replyState = null;
+  $('reply-banner')?.classList.remove('show');
+}
+
+/* ═══════════════════════════════════════════════════════════
    PWA — Service Worker Registration
 ═══════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
@@ -3648,32 +3917,97 @@ function closeChat() {
 function sendChatMsg() {
   const text = $('chat-input').value.trim();
   if (!text || !S.socket) return;
-  S.socket.emit('chat:send', { text });
+  S.socket.emit('chat:send', {
+    text,
+    replyToId:   _replyState?.id   || null,
+    replyText:   _replyState?.text  || null,
+    replySender: _replyState?.senderName || null,
+  });
   $('chat-input').value = '';
+  cancelReply();
 }
 
-function renderChatMsg({ senderName, role, text, ts, sid }) {
+function renderChatMsg(msg) {
+  const { senderName, role, text, ts, sid, id, replyToId, replyText, replySender, voiceData, duration, systemAudio } = msg;
   const div = document.createElement('div');
+
   if (role === 'system') {
-    // System messages (aux transfer etc) shown centred in muted style
-    div.style.cssText = 'text-align:center;font-size:11px;color:var(--muted);padding:4px 0;';
+    div.style.cssText = 'text-align:center;font-size:11px;color:var(--muted);padding:6px 0;';
     div.textContent = text;
     $('chat-messages').appendChild(div);
     $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
     return;
   }
+  if (msg.isReaction) {
+    div.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:6px;padding:3px 0;';
+    div.innerHTML = '<span style="font-size:18px;">' + (msg.emoji||'') + '</span>' +
+      '<span style="font-size:10px;color:var(--muted);">' + escHtml(msg.senderName||'') +
+      ' · ' + new Date(msg.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) + '</span>';
+    $('chat-messages').appendChild(div);
+    $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+    return;
+  }
+
   const isMe = sid === S.socket?.id;
   div.className = 'chat-msg ' + (isMe ? 'mine' : 'theirs');
+  if (id) div.dataset.msgId = id;
+
   const time = new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
+  // Reply preview
+  const replyHTML = replyToId
+    ? '<div class="chat-reply-preview">' +
+        '<span style="color:var(--cyan);font-weight:600;">' + escHtml(replySender||'') + '</span> ' +
+        escHtml((replyText||'').slice(0, 60)) +
+      '</div>'
+    : '';
+
+  // Voice message
+  let contentHTML;
+  if (voiceData) {
+    const icon = systemAudio ? '🎚️' : '🎙️';
+    const label = systemAudio ? 'System audio' : 'Voice message';
+    contentHTML =
+      '<div class="audio-msg" onclick="playVoiceMsg(this)" data-b64="' + voiceData + '">' +
+        '<span class="audio-msg-icon">' + icon + '</span>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:11px;color:var(--muted);">' + label + '</div>' +
+          '<div class="audio-waveform"></div>' +
+        '</div>' +
+        '<span class="audio-msg-dur">' + (duration||'') + 's</span>' +
+      '</div>';
+  } else {
+    contentHTML = '<div class="chat-bubble">' + replyHTML + escHtml(text) + '</div>';
+  }
+
+  // Reply button — use data attributes to avoid quoting hell
+  const replyBtn = isMe ? '' :
+    '<button onclick="handleReplyBtn(this)" data-id="' + (id||0) + '"' +
+      ' data-text="' + escHtml((text||'').slice(0,60)) + '"' +
+      ' data-sender="' + escHtml(senderName||'') + '"' +
+      ' style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 4px;" title="Reply">↩</button>';
+
   div.innerHTML =
-    '<div class="chat-bubble">' + escHtml(text) + '</div>' +
+    contentHTML +
     '<div class="chat-msg-meta">' +
       (isMe ? 'You' : escHtml(senderName)) +
       (role === 'master' ? ' <span class="host-tag">HOST</span>' : '') +
-      ' · ' + time +
+      (role === 'follower' && senderName && senderName !== 'Guest' ? '' : '') +
+      ' · ' + time + replyBtn +
     '</div>';
+
   $('chat-messages').appendChild(div);
   $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+}
+
+function playVoiceMsg(el) {
+  const b64 = el.dataset.b64;
+  if (!b64) return;
+  const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type:'audio/webm' });
+  const url  = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.play().catch(e => toast('Cannot play: ' + e.message));
+  audio.onended = () => URL.revokeObjectURL(url);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3807,31 +4141,66 @@ let _scoreMap = new Map(); // userId → score entry
 
 function openScoreboard() {
   $('score-panel').classList.add('open');
+  showScoreTab('board');
   if (S.socket) S.socket.emit('leaderboard:get');
 }
 function closeScoreboard() {
   $('score-panel').classList.remove('open');
 }
 
-function renderLeaderboard(board) {
+let _lastBoard = [], _lastReactions = [];
+
+function renderLeaderboard(board, reactions) {
+  if (board)     _lastBoard     = board;
+  if (reactions) _lastReactions = reactions;
+  const lu = $('score-last-updated');
+  if (lu) lu.textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   const el = $('score-list');
-  if (!board || !board.length) {
+  if (!_lastBoard || !_lastBoard.length) {
     el.innerHTML = '<p style="text-align:center;color:var(--muted);font-size:13px;padding:30px 0;">No scores yet — start chatting!</p>';
     return;
   }
   const medals = ['🥇','🥈','🥉'];
-  el.innerHTML = board.map((u, i) =>
-    '<div class="score-row">' +
-    '<div class="score-rank ' + (i===0?'gold':i===1?'silver':i===2?'bronze':'') + '">' +
-      (medals[i] || (i+1)) + '</div>' +
-    '<div class="score-av">' + escHtml((u.name||'?')[0].toUpperCase()) + '</div>' +
-    '<div style="flex:1;">' +
-      '<div class="score-name">' + escHtml(u.name||'Unknown') + '</div>' +
-      '<div class="score-breakdown">💬 ' + (u.chat_points||0) + ' · 😊 ' + (u.reaction_points||0) + ' · 🎵 ' + (u.session_points||0) + '</div>' +
-    '</div>' +
-    '<div class="score-pts">' + (u.total_points||0) + ' pts</div>' +
-    '</div>'
-  ).join('');
+  el.innerHTML = _lastBoard.map((u, i) => {
+    const wp=u.word_points||0, rp=u.reaction_points||0, ryp=u.reply_points||0,
+          sp=u.song_points||0, vp=u.voice_points||0, tp=u.total_points||0;
+    const rankCls = i===0?'gold':i===1?'silver':i===2?'bronze':'';
+    return '<div class="score-row">' +
+      '<div class="score-rank ' + rankCls + '">' + (medals[i]||'#'+(i+1)) + '</div>' +
+      '<div class="score-av">' + escHtml((u.name||'?')[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div class="score-name">' + escHtml(u.name||'Unknown') +
+          (u.songs_shared>0 ? ' <span style="font-size:10px;color:var(--cyan);">🎵×'+u.songs_shared+'</span>':'') +
+        '</div>' +
+        '<div class="score-breakdown">💬'+wp+' 😊'+rp+' ↩'+ryp+' 🎵'+sp+' 🎙️'+vp+'</div>' +
+      '</div>' +
+      '<div class="score-pts">'+tp+'<span style="font-size:10px;color:var(--muted);">pts</span></div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderReactionLog(reactions) {
+  const el = $('reaction-log-list'); if (!el) return;
+  if (!reactions || !reactions.length) {
+    el.innerHTML = '<p style="text-align:center;color:var(--muted);font-size:13px;padding:20px;">No reactions yet</p>';
+    return;
+  }
+  el.innerHTML = reactions.map(r => {
+    const time = new Date(r.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--bdr);">' +
+      '<span style="font-size:24px;">' + r.emoji + '</span>' +
+      '<div style="flex:1;"><div style="font-size:12px;">' + escHtml(r.userName||'Unknown') + '</div>' +
+      '<div style="font-size:10px;color:var(--muted);">' + time + '</div></div>' +
+    '</div>';
+  }).join('');
+}
+
+function showScoreTab(tab) {
+  $('score-list').style.display         = tab==='board' ? '' : 'none';
+  $('reaction-log-list').style.display  = tab==='board' ? 'none' : '';
+  $('tab-board')?.classList.toggle('active', tab==='board');
+  $('tab-reactions')?.classList.toggle('active', tab==='reactions');
+  if (tab==='reactions') renderReactionLog(_lastReactions);
 }
 
 /* ═══════════════════════════════════════════════════════════
