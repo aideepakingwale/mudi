@@ -34,7 +34,7 @@ function snapshot(room) {
     hasPassword:   room.hasPassword,
     fileHash:      room.fileHash,
     readyCount:    room.readySet.size,
-    allReady:      room.readySet.size > 0 && room.readySet.size >= room.followers.size,
+    allReady:      room.followers.size > 0 && room.readySet.size >= room.followers.size,
   };
 }
 

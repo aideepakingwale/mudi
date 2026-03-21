@@ -573,7 +573,7 @@ module.exports = {
 
   async getLeaderboard(roomCode, limit = 20) {
     return _rows(await _getDb(),
-      `SELECT u.id, u.name, u.avatar,
+      `SELECT DISTINCT u.id, u.name, u.avatar,
          COALESCE(s.word_points,0)     as word_points,
          COALESCE(s.reaction_points,0) as reaction_points,
          COALESCE(s.reply_points,0)    as reply_points,
@@ -585,11 +585,9 @@ module.exports = {
          COALESCE(s.songs_shared,0)    as songs_shared
        FROM users u
        INNER JOIN user_scores s ON s.user_id=u.id
-       LEFT JOIN room_members rm    ON rm.user_id=u.id
-       LEFT JOIN permanent_rooms pr ON pr.id=rm.room_id AND pr.code=?
        WHERE s.user_id IS NOT NULL
        ORDER BY s.total_points DESC LIMIT ?`,
-      [roomCode, limit]
+      [limit]
     );
   },
   // Chat persistence

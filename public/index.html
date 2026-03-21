@@ -2337,7 +2337,13 @@ function resetFileUI() {
   const label   = $('prog-send-label');
   if (chip)    { chip.style.display    = '';      }   // show label
   if (block)   { block.style.display   = 'none';  }   // hide progress
-  if (syncBtn) { syncBtn.style.display = 'none';  }   // hide sync play
+  if (syncBtn) {
+    syncBtn.style.display = 'none';
+    syncBtn.disabled      = false;
+    syncBtn.style.opacity = '1';
+    syncBtn.style.cursor  = 'pointer';
+    syncBtn.innerHTML     = '▶ &nbsp;Sync Play';
+  }  // hide sync play
   if (badge)   { badge.style.display   = 'none';  }
   if (prog)    { prog.style.width      = '0%';    }
   if (label)   { label.textContent     = '';       label.style.color = ''; }
@@ -2421,6 +2427,11 @@ function onFileSelect(e) {
 }
 
 function onSyncPlay() {
+  const btn = $('sync-play-btn');
+  if (btn && btn.disabled) {
+    toast('Waiting for all listeners to finish downloading...', TOAST_DURATION.short);
+    return;
+  }
   S.socket.emit('sync:play', { position: 0 });
 }
 
@@ -2997,16 +3008,28 @@ function initSocket() {
 
   S.socket.on('file:ready', ({ readyCount, allReady, listenerCount }) => {
     S.readyCount = readyCount;
-    // Use server-provided listenerCount as it's always accurate
     const total = listenerCount !== undefined ? listenerCount : S.listenerCount;
     if (total > 0) S.listenerCount = total;
-    const label = readyCount + '/' + total + ' listener' + (total !== 1 ? 's' : '') + ' verified';
+
+    const label = readyCount + '/' + total + ' listener' + (total !== 1 ? 's' : '') + ' ready';
     $('prog-send-label').textContent = '✓ ' + label;
+
+    // Always show the button so host can see progress — disabled until everyone is ready
+    const btn = $('sync-play-btn');
+    btn.style.display = 'flex';
+
     if (allReady) {
-      $('sync-play-btn').style.display = 'flex';
-      toast('All listeners ready — tap Sync Play');
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor  = 'pointer';
+      btn.innerHTML = '▶ &nbsp;Sync Play';
+      toast('All listeners ready — tap Sync Play', TOAST_DURATION.aux);
     } else {
-      toast(label);
+      btn.disabled = true;
+      btn.style.opacity = '0.55';
+      btn.style.cursor  = 'not-allowed';
+      btn.innerHTML = '⏳ &nbsp;Waiting ' + readyCount + '/' + total;
+      toast(label, TOAST_DURATION.short);
     }
   });
 
@@ -3271,8 +3294,24 @@ function initSocket() {
       goScreen('room');
     }
 
-    if (allReady && S.role === 'master') {
-      $('sync-play-btn').style.display = 'flex';
+    if (S.role === 'master' && S.fileHash) {
+      const btn  = $('sync-play-btn');
+      const rc   = readyCount || 0;
+      const tot  = listenerCount || S.listenerCount || 0;
+      if (allReady && tot > 0) {
+        btn.style.display = 'flex';
+        btn.disabled      = false;
+        btn.style.opacity = '1';
+        btn.style.cursor  = 'pointer';
+        btn.innerHTML     = '▶ &nbsp;Sync Play';
+      } else if (rc > 0 && tot > 0) {
+        // Some but not all ready — show disabled with progress
+        btn.style.display = 'flex';
+        btn.disabled      = true;
+        btn.style.opacity = '0.55';
+        btn.style.cursor  = 'not-allowed';
+        btn.innerHTML     = '⏳ &nbsp;Waiting ' + rc + '/' + tot;
+      }
     }
   });
 

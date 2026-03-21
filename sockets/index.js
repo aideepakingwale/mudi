@@ -149,7 +149,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     const room = rooms.get(code);
     if (!room || !data) return;
     const follower   = room.followers.get(socket.id);
-    const senderName = follower?.displayName || follower?.name || (user?.name || 'Guest');
+    const senderName = follower?.displayName || follower?.name || user?.name || 'Guest';
     const role       = room.masterSid === socket.id ? 'master' : 'follower';
     const payload = {
       sid: socket.id, senderName, role, ts: Date.now(),
@@ -176,8 +176,9 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     const msg = (text || '').trim().slice(0, 280);
     if (!msg) return;
     const follower   = room.followers.get(socket.id);
-    const senderName = follower?.displayName
-      || (room.masterSid === socket.id ? (user?.name || 'Host') : (user?.name || 'Listener'));
+    // For master socket: use authenticated user name directly (not in followers map)
+    const senderName = follower?.displayName || follower?.name || user?.name
+      || (room.masterSid === socket.id ? 'Host' : 'Listener');
     const role      = room.masterSid === socket.id ? 'master' : 'follower';
     const replyToId = typeof rToId === 'number' ? rToId : null;
     const payload   = {
@@ -206,7 +207,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     const room = rooms.get(code);
     if (!room || !emoji || emoji.length > 8) return;
     const follower   = room.followers.get(socket.id);
-    const senderName = follower?.displayName || follower?.name || (user?.name || 'Someone');
+    const senderName = follower?.displayName || follower?.name || user?.name || 'Someone';
     io.to(code).emit('reaction:broadcast', { emoji, senderName, sid: socket.id, ts: Date.now() });
     const rxnMsg = {
       sid: socket.id, senderName, role: socket.data.role || 'follower',
@@ -367,14 +368,16 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
       // Collect user IDs of all live room participants so they show on
       // the board immediately even before earning any points
       const room = rooms.get(code);
-      const liveUserIds = [];
+      // Collect unique user IDs — same user on 2 tabs has same user.id
+      const liveUserIdSet = new Set();
       if (room) {
         const allSids = [room.masterSid, ...room.followers.keys()].filter(Boolean);
         for (const sid of allSids) {
           const s = io.sockets.sockets.get(sid);
-          if (s?.request?.user?.id) liveUserIds.push(s.request.user.id);
+          if (s?.request?.user?.id) liveUserIdSet.add(s.request.user.id);
         }
       }
+      const liveUserIds = [...liveUserIdSet];
       const [board, reactions] = await Promise.all([
         db.getLeaderboardLive(code, liveUserIds, 20),
         db.getRoomReactions(code, 50),
