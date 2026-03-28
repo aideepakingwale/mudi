@@ -350,10 +350,17 @@ select,input,button,textarea{font-family:inherit;}
 .chat-reply-name{color:var(--cyan);font-weight:600;}
 .chat-reply-text{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;}
 .chat-reply-preview{
-  border-left:2px solid rgba(0,173,181,.4);padding:3px 6px;
-  background:rgba(0,173,181,.06);border-radius:4px;
-  font-size:10px;color:var(--muted);margin-bottom:4px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  border-left:3px solid var(--cyan);padding:5px 8px;
+  background:rgba(0,173,181,.08);border-radius:6px;
+  margin-bottom:6px;display:flex;flex-direction:column;gap:2px;
+}
+.chat-reply-preview .rp-name{
+  font-size:11px;font-weight:700;color:var(--cyan);
+}
+.chat-reply-preview .rp-text{
+  font-size:11px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
 #reply-banner{
   display:none;align-items:center;gap:8px;
@@ -1056,10 +1063,19 @@ select,input,button,textarea{font-family:inherit;}
     <button id="reply-cancel" onclick="cancelReply()">✕</button>
   </div>
   <div id="chat-input-row">
-    <button id="voice-btn" title="Hold to record voice" ontouchstart="startVoiceRecord(event)" ontouchend="stopVoiceRecord(event)" onmousedown="startVoiceRecord(event)" onmouseup="stopVoiceRecord(event)">🎙️</button>
+    <button id="voice-btn"
+      title="Hold to record voice, release to send"
+      ontouchstart="startVoiceRecord(event)"
+      ontouchend="stopVoiceRecord(event)"
+      onmousedown="startVoiceRecord(event)"
+      onmouseup="stopVoiceRecord(event)"
+      onmouseleave="stopVoiceRecord(event)"
+      aria-label="Hold to record voice">🎙️</button>
     <input id="chat-input" type="text" placeholder="Message..." maxlength="280"
       autocomplete="off">
-    <button id="sysaudio-btn" onclick="toggleSystemAudio()" title="Share system/screen audio">🎚️</button>
+    <button id="sysaudio-btn" onclick="showAudioShareMenu()"
+      title="Share live audio — mic, system, or any app"
+      aria-label="Share live audio">📡</button>
     <button class="chat-send-btn" id="chat-send-btn">➤</button>
   </div>
 </div>
@@ -3925,19 +3941,50 @@ async function stopVoiceRecord(e) {
 }
 
 // ── System / screen audio ──
-async function toggleSystemAudio() {
-  const btn = $('sysaudio-btn');
-  if (_sysAudioStream) {
-    // Stop sharing
-    _sysAudioStream.getTracks().forEach(t => t.stop());
-    _sysAudioStream = null;
-    if (_sysAudioRecorder) { _sysAudioRecorder.stop(); _sysAudioRecorder = null; }
-    if (btn) btn.classList.remove('active');
-    toast('System audio sharing stopped', TOAST_DURATION.short);
-    return;
+// ── Audio share menu ──────────────────────────────────────────────────────────
+let _audioShareMenu = false;
+function showAudioShareMenu() {
+  const menu = $('audio-share-menu');
+  const stopBtn = $('stop-share-btn');
+  if (!menu) return;
+  _audioShareMenu = !_audioShareMenu;
+  menu.style.display = _audioShareMenu ? 'block' : 'none';
+  // Show stop button only if currently sharing
+  if (stopBtn) stopBtn.style.display = (_sysAudioStream || _micShareStream) ? 'flex' : 'none';
+  // Close on outside click
+  if (_audioShareMenu) {
+    setTimeout(() => document.addEventListener('click', function _close(e) {
+      if (!menu.contains(e.target) && e.target.id !== 'sysaudio-btn') {
+        menu.style.display = 'none'; _audioShareMenu = false;
+        document.removeEventListener('click', _close);
+      }
+    }), 50);
   }
+}
+
+let _micShareStream   = null;
+let _micShareRecorder = null;
+let _micChunks        = [];
+
+async function startMicShare() {
+  $('audio-share-menu').style.display = 'none'; _audioShareMenu = false;
+  if (_micShareStream) { stopAllAudioShare(); return; }
   try {
-    // getDisplayMedia with systemAudio — supported in Chrome 105+
+    _micShareStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    $('sysaudio-btn').classList.add('active');
+    toast('🎙️ Live mic sharing active — sending 10s chunks', TOAST_DURATION.short);
+    _streamAudioInChunks(_micShareStream, false);
+    _micShareStream.getTracks()[0].onended = stopAllAudioShare;
+  } catch(e) {
+    if (e.name !== 'NotAllowedError') toast('Mic error: ' + e.message);
+    else toast('Microphone permission denied');
+  }
+}
+
+async function startSystemAudioShare() {
+  $('audio-share-menu').style.display = 'none'; _audioShareMenu = false;
+  if (_sysAudioStream) { stopAllAudioShare(); return; }
+  try {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: false,
       audio: { systemAudio: 'include', echoCancellation: false, noiseSuppression: false },
@@ -3945,43 +3992,58 @@ async function toggleSystemAudio() {
     const audioTracks = stream.getAudioTracks();
     if (!audioTracks.length) {
       stream.getTracks().forEach(t => t.stop());
-      toast('No audio track captured. Make sure to select "Share system audio" in the dialog.');
+      toast('No audio captured — tick "Share system audio" in the browser dialog');
       return;
     }
     _sysAudioStream = stream;
-    if (btn) btn.classList.add('active');
-    toast('System audio sharing active — will send as voice message', TOAST_DURATION.short);
-
-    // Record in 30s chunks and send each as a voice message
-    function startChunk() {
-      if (!_sysAudioStream) return;
-      _sysAudioChunks  = [];
-      _sysAudioRecorder = new MediaRecorder(new MediaStream(audioTracks));
-      _sysAudioRecorder.ondataavailable = ev => _sysAudioChunks.push(ev.data);
-      _sysAudioRecorder.onstop = () => {
-        const blob   = new Blob(_sysAudioChunks, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onload = () => {
-          const b64 = reader.result.split(',')[1];
-          if (S.socket && b64) {
-            S.socket.emit('chat:voice', { data: b64, duration: '30.0', systemAudio: true });
-          }
-        };
-        reader.readAsDataURL(blob);
-        if (_sysAudioStream) startChunk(); // next chunk
-      };
-      _sysAudioRecorder.start();
-      setTimeout(() => { if (_sysAudioRecorder?.state === 'recording') _sysAudioRecorder.stop(); }, 30000);
-    }
-    stream.getTracks()[0].onended = () => {
-      _sysAudioStream = null;
-      if (btn) btn.classList.remove('active');
-    };
-    startChunk();
+    $('sysaudio-btn').classList.add('active');
+    toast('💻 System audio sharing active — play any app', TOAST_DURATION.short);
+    _streamAudioInChunks(stream, true);
+    stream.getTracks()[0].onended = stopAllAudioShare;
   } catch(e) {
     if (e.name !== 'AbortError') toast('System audio: ' + e.message);
   }
 }
+
+function _streamAudioInChunks(stream, isSysAudio) {
+  const CHUNK_MS = 10000; // 10s chunks — lower latency than 30s
+  let chunks = [], recorder = null;
+  function nextChunk() {
+    const active = isSysAudio ? _sysAudioStream : _micShareStream;
+    if (!active) return;
+    chunks = [];
+    recorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()));
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onload = () => {
+        const b64 = reader.result.split(',')[1];
+        if (S.socket && b64)
+          S.socket.emit('chat:voice', { data: b64, duration: (CHUNK_MS/1000).toFixed(1), systemAudio: isSysAudio });
+      };
+      reader.readAsDataURL(blob);
+      if (isSysAudio ? _sysAudioStream : _micShareStream) nextChunk();
+    };
+    recorder.start();
+    setTimeout(() => { if (recorder?.state === 'recording') recorder.stop(); }, CHUNK_MS);
+    if (isSysAudio) _sysAudioRecorder = recorder; else _micShareRecorder = recorder;
+  }
+  nextChunk();
+}
+
+function stopAllAudioShare() {
+  if (_sysAudioStream) { _sysAudioStream.getTracks().forEach(t => t.stop()); _sysAudioStream = null; }
+  if (_micShareStream) { _micShareStream.getTracks().forEach(t => t.stop()); _micShareStream = null; }
+  if (_sysAudioRecorder?.state === 'recording') { _sysAudioRecorder.stop(); }
+  if (_micShareRecorder?.state === 'recording') { _micShareRecorder.stop(); }
+  $('sysaudio-btn')?.classList.remove('active');
+  $('audio-share-menu').style.display = 'none'; _audioShareMenu = false;
+  toast('Audio sharing stopped', TOAST_DURATION.short);
+}
+
+// Keep old name as alias for any remaining calls
+function toggleSystemAudio() { showAudioShareMenu(); }
 
 // ── Reply logic ──
 function handleReplyBtn(btn) {
@@ -4140,17 +4202,19 @@ function renderChatMsg(msg) {
     return;
   }
 
-  const isMe = sid === S.socket?.id;
+  // sid changes on reload — fall back to senderName match for history messages
+  const isMe = sid === S.socket?.id ||
+    (!S.socket?.id && senderName && senderName === (_myDisplayName || S.userName));
   div.className = 'chat-msg ' + (isMe ? 'mine' : 'theirs');
   if (id) div.dataset.msgId = id;
 
   const time = new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
-  // Reply preview
-  const replyHTML = replyToId
+  // Reply preview — WhatsApp-style quoted block
+  const replyHTML = (replyToId && replyText)
     ? '<div class="chat-reply-preview">' +
-        '<span style="color:var(--cyan);font-weight:600;">' + escHtml(replySender||'') + '</span> ' +
-        escHtml((replyText||'').slice(0, 60)) +
+        '<div class="rp-name">' + escHtml(replySender||'Unknown') + '</div>' +
+        '<div class="rp-text">' + escHtml((replyText||'').slice(0, 120)) + '</div>' +
       '</div>'
     : '';
 
@@ -4172,12 +4236,12 @@ function renderChatMsg(msg) {
     contentHTML = '<div class="chat-bubble">' + replyHTML + escHtml(text) + '</div>';
   }
 
-  // Reply button — use data attributes to avoid quoting hell
-  const replyBtn = isMe ? '' :
+  // Reply button on every message (own messages too so others can reply to them)
+  const replyBtn =
     '<button onclick="handleReplyBtn(this)" data-id="' + (id||0) + '"' +
       ' data-text="' + escHtml((text||'').slice(0,60)) + '"' +
       ' data-sender="' + escHtml(senderName||'') + '"' +
-      ' style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 4px;" title="Reply">↩</button>';
+      ' style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 4px;opacity:.6;" title="Reply">↩</button>';
 
   div.innerHTML =
     contentHTML +
@@ -4664,6 +4728,38 @@ async function loadAnalytics() {
   font-size:clamp(8px,1.9vw,9px);color:var(--cyan);opacity:0.45;
   letter-spacing:.05em;font-family:var(--fm);">
   MuDi v3.1.0 &nbsp;&middot;&nbsp; &copy; 2026 Deepak Ingwale
+</div>
+
+<!-- ══ AUDIO SHARE MENU ════════════════════════════════════════════════════ -->
+<div id="audio-share-menu" style="
+  display:none;position:fixed;bottom:72px;right:16px;z-index:600;
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:16px;
+  padding:8px;min-width:220px;box-shadow:0 8px 32px rgba(0,0,0,.4);">
+  <div style="font-size:11px;color:var(--muted);padding:4px 8px 8px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Share Live Audio</div>
+  <button onclick="startMicShare()" style="width:100%;display:flex;align-items:center;gap:10px;
+    background:none;border:none;color:var(--white);cursor:pointer;padding:10px 8px;border-radius:10px;font-size:13px;">
+    <span style="font-size:20px;">🎙️</span>
+    <div style="text-align:left;">
+      <div style="font-weight:500;">Microphone</div>
+      <div style="font-size:10px;color:var(--muted);">Record your voice live</div>
+    </div>
+  </button>
+  <button onclick="startSystemAudioShare()" style="width:100%;display:flex;align-items:center;gap:10px;
+    background:none;border:none;color:var(--white);cursor:pointer;padding:10px 8px;border-radius:10px;font-size:13px;">
+    <span style="font-size:20px;">💻</span>
+    <div style="text-align:left;">
+      <div style="font-weight:500;">System Audio</div>
+      <div style="font-size:10px;color:var(--muted);">YouTube, Spotify, any app (Chrome)</div>
+    </div>
+  </button>
+  <button onclick="stopAllAudioShare()" id="stop-share-btn" style="width:100%;display:flex;align-items:center;gap:10px;
+    background:none;border:none;color:var(--red);cursor:pointer;padding:10px 8px;border-radius:10px;font-size:13px;display:none;">
+    <span style="font-size:20px;">⏹️</span>
+    <div style="text-align:left;"><div style="font-weight:500;">Stop Sharing</div></div>
+  </button>
+  <div style="font-size:9px;color:var(--muted);padding:6px 8px 2px;border-top:1px solid var(--bdr);margin-top:4px;">
+    Audio is sent as 10-second voice message chunks
+  </div>
 </div>
 </body>
 </html>

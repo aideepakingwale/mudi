@@ -178,7 +178,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     const logEntry = { ...payload, voiceData: undefined };
     room.chatLog.push(logEntry);
     if (room.chatLog.length > 100) room.chatLog.shift();
-    db.saveChat(code, { sid: socket.id, senderName, role, text: logEntry.text }).catch(() => {});
+    db.saveChat(code, { sid: socket.id, senderName, role, text: logEntry.text, ts: payload.ts }).catch(() => {});
     if (user?.id) {
       db.addPoints(user.id, 'voice', 5).catch(() => {});
       const board = await db.getLeaderboard(code).catch(() => []);
@@ -207,6 +207,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     if (room.chatLog.length > 100) room.chatLog.shift();
     db.saveChat(room.code, { sid: socket.id, senderName, role, text: msg,
       replyToId, replyText: rText || null, replySender: rSender || null,
+      ts: payload.ts,
     }).then(id => { payload.id = id; }).catch(() => {});
     if (user?.id) {
       const wordCount  = msg.trim().split(/\s+/).filter(Boolean).length;
@@ -232,7 +233,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     };
     room.chatLog.push(rxnMsg);
     if (room.chatLog.length > 100) room.chatLog.shift();
-    db.saveChat(code, { sid: socket.id, senderName, role: rxnMsg.role, text: rxnMsg.text }).catch(() => {});
+    db.saveChat(code, { sid: socket.id, senderName, role: rxnMsg.role, text: rxnMsg.text, ts: rxnMsg.ts }).catch(() => {});
     if (user?.id) {
       db.addPoints(user.id, 'reaction', 10).catch(() => {});
       db.incrementCounter(user.id, 'reactions_sent').catch(() => {});

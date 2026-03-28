@@ -666,13 +666,14 @@ module.exports = {
     );
   },
   // Chat persistence
-  async saveChat(roomCode, { sid, senderName, role, text, replyToId, replyText, replySender }) {
+  async saveChat(roomCode, { sid, senderName, role, text, replyToId, replyText, replySender, ts }) {
     const d = await _getDb();
+    const tsMs = ts || Date.now();
     _run(d,
-      `INSERT INTO room_chat (room_code,sid,sender_name,role,text,reply_to_id,reply_text,reply_sender)
-       VALUES (?,?,?,?,?,?,?,?)`,
+      `INSERT INTO room_chat (room_code,sid,sender_name,role,text,reply_to_id,reply_text,reply_sender,ts)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
       [roomCode, sid||null, senderName||null, role||null, text,
-       replyToId||null, replyText||null, replySender||null]);
+       replyToId||null, replyText||null, replySender||null, tsMs]);
     return d.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
   },
   async getChatHistory(roomCode, limit=100) {
