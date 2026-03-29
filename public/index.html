@@ -3460,18 +3460,40 @@ function initSocket() {
     renderLeaderboard(board, reactions);
   });
 
-  // Live stream signals from host
+  // ── Live stream receive ──────────────────────────────────────────────────────
   S.socket.on('livestream:start', ({ source }) => {
     S._liveStream = true;
+    _nextPlayAt   = 0;
+    _liveBuffer   = [];
+    _liveDecoding = false;
+    if (_liveAudioCtx && _liveAudioCtx.state !== 'closed') {
+      _liveAudioCtx.close().catch(()=>{});
+      _liveAudioCtx = null;
+    }
     const badge = $('live-badge');
     if (badge) badge.style.display = '';
     $('wait-file').style.display = 'none';
-    toast((source === 'mic' ? '🎙️' : '💻') + ' Host is streaming live — audio will play automatically');
+    toast((source === 'mic' ? '🎙️' : '💻') + ' Host is live — audio starts in ~1s');
   });
+
+  // Binary audio chunks — decode and schedule for gapless playback
+  S.socket.on('stream:chunk', async (data) => {
+    if (!S._liveStream) return;
+    // data arrives as ArrayBuffer from Socket.IO binary transport
+    const buf = data instanceof ArrayBuffer ? data : data.buffer || new Uint8Array(data).buffer;
+    _liveBuffer.push(buf.slice(0)); // defensive copy
+    _decodeLiveQueue();
+  });
+
   S.socket.on('livestream:stop', () => {
     S._liveStream = false;
+    _liveBuffer   = [];
     const badge = $('live-badge');
     if (badge) badge.style.display = 'none';
+    if (_liveAudioCtx) {
+      // Let queued audio finish then close
+      setTimeout(() => { _liveAudioCtx?.close().catch(()=>{}); _liveAudioCtx = null; }, 3000);
+    }
     toast('Host ended the live stream');
   });
 
@@ -4130,15 +4152,35 @@ function cancelReply() {
    through the existing sendFile() relay path.
    Listeners auto-play each chunk as it arrives.
 ═══════════════════════════════════════════════════════════════ */
-let _liveStream       = null;   // MediaStream
-let _liveRecorder     = null;   // MediaRecorder
-let _liveChunks       = [];
-let _liveChunkNum     = 0;
-let _liveActive       = false;
-let _liveSource       = '';     // 'mic' | 'system'
-let _liveChunkTimer   = null;
-let _liveProgTimer    = null;
-const LIVE_CHUNK_MS   = 5000;   // 5s per chunk
+/* ═══════════════════════════════════════════════════════════
+   LIVE STREAM ENGINE  (continuous binary WebM/Opus stream)
+
+   HOST:
+   - MediaRecorder fires ondataavailable every 250ms
+   - Each blob → ArrayBuffer → emitted as Socket.IO binary 'stream:chunk'
+   - Server relays immediately to all followers
+   - Separate 4s "segment" boundary blobs give listeners a full
+     WebM header so they can decode the stream at any join point
+
+   LISTENER:
+   - AudioContext scheduled-source playback
+   - Each received chunk decoded with decodeAudioData()
+   - Buffers are scheduled on a _nextPlayAt timeline → gapless
+   - ~1s total latency (network + decode)
+═══════════════════════════════════════════════════════════ */
+let _liveStream    = null;
+let _liveRecorder  = null;
+let _liveActive    = false;
+let _liveSource    = '';
+let _liveBytesSent = 0;
+let _liveChunkCount= 0;
+let _liveBytesEl   = null;
+
+// Listener-side scheduled playback
+let _liveAudioCtx  = null;
+let _nextPlayAt    = 0;         // AudioContext time for next buffer start
+let _liveBuffer    = [];        // incoming ArrayBuffers waiting to decode
+let _liveDecoding  = false;
 
 function showLiveStreamMenu() {
   if (_liveActive) { stopLiveStream(); return; }
@@ -4158,12 +4200,13 @@ async function startLiveStream(source) {
   try {
     if (source === 'mic') {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
       });
     } else {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: false,
-        audio: { systemAudio: 'include', echoCancellation: false, noiseSuppression: false },
+        audio: { systemAudio: 'include', echoCancellation: false,
+                 noiseSuppression: false, sampleRate: 48000 },
       });
       if (!stream.getAudioTracks().length) {
         stream.getTracks().forEach(t => t.stop());
@@ -4175,97 +4218,100 @@ async function startLiveStream(source) {
     if (e.name !== 'AbortError' && e.name !== 'NotAllowedError')
       toast('Stream error: ' + e.message);
     else if (e.name === 'NotAllowedError')
-      toast('Permission denied — allow microphone access');
+      toast('Permission denied');
     return;
   }
 
-  _liveStream   = stream;
-  _liveActive   = true;
-  _liveSource   = source;
-  _liveChunkNum = 0;
+  _liveStream    = stream;
+  _liveActive    = true;
+  _liveSource    = source;
+  _liveBytesSent = 0;
+  _liveChunkCount= 0;
 
-  // Hide file chip, show live card
   $('file-chip').style.display        = 'none';
   $('livestream-chip').style.display  = 'none';
   $('livestream-card').style.display  = '';
-  $('livestream-title').textContent   = source === 'mic' ? '🎙️ Microphone live' : '💻 System audio live';
-  resetFileUI(); // clear any previous file state
+  $('livestream-title').textContent   = source === 'mic' ? '🎙️ Mic live' : '💻 System audio live';
+  $('livestream-prog').style.width    = '0%';
+  _liveBytesEl = $('livestream-prog-label');
+  resetFileUI();
 
-  // Tell listeners a live stream is starting
   S.socket.emit('livestream:start', { source });
-  toast((source === 'mic' ? '🎙️' : '💻') + ' Live streaming started — ' + LIVE_CHUNK_MS/1000 + 's chunks');
+  toast((source === 'mic' ? '🎙️' : '💻') + ' Streaming live — listeners hear ~1s delay');
 
-  // Stop when media track ends (e.g. user stops screen share from browser UI)
   stream.getTracks()[0].onended = stopLiveStream;
 
-  _recordNextChunk();
-}
+  // Pick best mimeType — Opus in WebM is smallest and most decodable
+  const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
 
-function _recordNextChunk() {
-  if (!_liveActive || !_liveStream) return;
-  _liveChunks   = [];
-  const chunkN  = ++_liveChunkNum;
-  const tracker = $('livestream-status');
-  const prog    = $('livestream-prog');
-  const label   = $('livestream-prog-label');
-
-  _liveRecorder = new MediaRecorder(_liveStream, {
-    mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/webm',
-  });
-  _liveRecorder.ondataavailable = e => { if (e.data.size > 0) _liveChunks.push(e.data); };
-  _liveRecorder.onstop = async () => {
-    if (!_liveActive) return;
-    const blob = new Blob(_liveChunks, { type: 'audio/webm' });
-    const buf  = await blob.arrayBuffer();
-    // Wrap as a File so sendFile() can handle it
-    const file = new File([buf], 'live-chunk-' + chunkN + '.webm', { type: 'audio/webm' });
-    // Tag it as a live chunk so listener knows to auto-play
-    file._liveChunk = true;
-    if (tracker) tracker.textContent = 'Chunk ' + chunkN + ' · ' + (S.listenerCount||0) + ' listener' + ((S.listenerCount||0)!==1?'s':'');
-    if (label)   label.textContent = 'Sending chunk ' + chunkN + '…';
-    try {
-      await sendFile(file);
-      if (label) label.textContent = '✓ Chunk ' + chunkN + ' sent';
-    } catch(e) {
-      console.warn('[live] chunk send error:', e.message);
+  // timeslice=250ms → ondataavailable fires every 250ms with a small blob
+  _liveRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  _liveRecorder.ondataavailable = async (e) => {
+    if (!_liveActive || e.data.size < 10) return;
+    const buf = await e.data.arrayBuffer();
+    _liveBytesSent += buf.byteLength;
+    _liveChunkCount++;
+    S.socket.emit('stream:chunk', buf);   // binary emit
+    // Update UI
+    const kb  = (_liveBytesSent / 1024).toFixed(0);
+    const ls  = S.listenerCount || 0;
+    if ($('livestream-status'))
+      $('livestream-status').textContent = ls + ' listener' + (ls!==1?'s':'') + ' · ' + kb + ' KB sent';
+    if (_liveBytesEl)
+      _liveBytesEl.textContent = 'Chunk ' + _liveChunkCount + ' · ' + kb + ' KB';
+    // Pulse progress bar
+    if ($('livestream-prog')) {
+      $('livestream-prog').style.width = '100%';
+      setTimeout(() => { if ($('livestream-prog')) $('livestream-prog').style.width = '0%'; }, 200);
     }
-    // Start next chunk immediately
-    if (_liveActive) _recordNextChunk();
   };
-
-  // Progress bar sweeps across LIVE_CHUNK_MS
-  let elapsed = 0;
-  clearInterval(_liveProgTimer);
-  if (prog) { prog.style.width = '0%'; }
-  _liveProgTimer = setInterval(() => {
-    elapsed += 100;
-    const pct = Math.min(elapsed / LIVE_CHUNK_MS * 100, 100);
-    if (prog) prog.style.width = pct.toFixed(1) + '%';
-    if (elapsed >= LIVE_CHUNK_MS) clearInterval(_liveProgTimer);
-  }, 100);
-
-  _liveRecorder.start();
-  _liveChunkTimer = setTimeout(() => {
-    if (_liveRecorder?.state === 'recording') _liveRecorder.stop();
-  }, LIVE_CHUNK_MS);
+  _liveRecorder.start(250);   // 250ms timeslice
 }
 
 function stopLiveStream() {
   _liveActive = false;
-  clearTimeout(_liveChunkTimer);
-  clearInterval(_liveProgTimer);
-  if (_liveRecorder?.state === 'recording') _liveRecorder.stop();
+  if (_liveRecorder?.state !== 'inactive') {
+    try { _liveRecorder.stop(); } catch(e) {}
+  }
   if (_liveStream) { _liveStream.getTracks().forEach(t => t.stop()); _liveStream = null; }
   $('livestream-card').style.display = 'none';
   $('file-chip').style.display       = '';
   $('livestream-chip').style.display = '';
-  if (S.socket) {
-    S.socket.emit('sync:stop');
-    S.socket.emit('livestream:stop');
-  }
+  if (S.socket) S.socket.emit('livestream:stop');
   resetFileUI();
   toast('Live stream stopped');
+}
+
+// ── LISTENER: receive and play stream:chunk ──────────────────────────────────
+function _initLiveAudioCtx() {
+  if (_liveAudioCtx && _liveAudioCtx.state !== 'closed') return;
+  _liveAudioCtx = new AudioContext({ sampleRate: 48000 });
+  _nextPlayAt   = _liveAudioCtx.currentTime + 0.5; // 500ms buffer head start
+}
+
+async function _decodeLiveQueue() {
+  if (_liveDecoding || _liveBuffer.length === 0) return;
+  _liveDecoding = true;
+  while (_liveBuffer.length > 0) {
+    const buf = _liveBuffer.shift();
+    try {
+      _initLiveAudioCtx();
+      const decoded = await _liveAudioCtx.decodeAudioData(buf);
+      const src     = _liveAudioCtx.createBufferSource();
+      src.buffer    = decoded;
+      src.connect(_liveAudioCtx.destination);
+      // Schedule immediately after previous buffer — gapless
+      const now     = _liveAudioCtx.currentTime;
+      if (_nextPlayAt < now) _nextPlayAt = now + 0.05; // catch up if we fell behind
+      src.start(_nextPlayAt);
+      _nextPlayAt += decoded.duration;
+    } catch(err) {
+      // Partial/header-only chunks can't decode — silently skip
+      console.debug('[live] decode skip:', err.message?.slice(0,40));
+    }
+  }
+  _liveDecoding = false;
 }
 
 /* ═══════════════════════════════════════════════════════════

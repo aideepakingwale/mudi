@@ -411,14 +411,22 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
   });
 
   // ═══════════════════════════════════════════════════════════
-  // LIVE STREAM — relay start/stop signal to followers
+  // LIVE STREAM — continuous binary audio relay
   // ═══════════════════════════════════════════════════════════
   socket.on('livestream:start', ({ source }) => {
     const room = rooms.get(socket.data.code);
     if (!room || room.masterSid !== socket.id) return;
     room._liveStream = true;
     socket.to(room.code).emit('livestream:start', { source: source || 'mic' });
-    console.log('[live] stream started by', user?.name || 'host', '- source:', source);
+    console.log('[live] started by', user?.name || 'host', 'source:', source);
+  });
+
+  // Binary audio chunk — relay immediately to all followers, no processing
+  socket.on('stream:chunk', (data) => {
+    const room = rooms.get(socket.data.code);
+    if (!room || room.masterSid !== socket.id || !room._liveStream) return;
+    // data is a Buffer (binary) — relay as-is
+    socket.to(room.code).emit('stream:chunk', data);
   });
 
   socket.on('livestream:stop', () => {
@@ -426,7 +434,7 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
     if (!room || room.masterSid !== socket.id) return;
     room._liveStream = false;
     socket.to(room.code).emit('livestream:stop');
-    console.log('[live] stream stopped');
+    console.log('[live] stopped');
   });
 
   // ═══════════════════════════════════════════════════════════
