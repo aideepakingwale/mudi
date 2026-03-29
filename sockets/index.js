@@ -411,6 +411,25 @@ function registerAllSocketHandlers(socket, io, rooms, nameIndex) {
   });
 
   // ═══════════════════════════════════════════════════════════
+  // LIVE STREAM — relay start/stop signal to followers
+  // ═══════════════════════════════════════════════════════════
+  socket.on('livestream:start', ({ source }) => {
+    const room = rooms.get(socket.data.code);
+    if (!room || room.masterSid !== socket.id) return;
+    room._liveStream = true;
+    socket.to(room.code).emit('livestream:start', { source: source || 'mic' });
+    console.log('[live] stream started by', user?.name || 'host', '- source:', source);
+  });
+
+  socket.on('livestream:stop', () => {
+    const room = rooms.get(socket.data.code);
+    if (!room || room.masterSid !== socket.id) return;
+    room._liveStream = false;
+    socket.to(room.code).emit('livestream:stop');
+    console.log('[live] stream stopped');
+  });
+
+  // ═══════════════════════════════════════════════════════════
   // DISCONNECT — room expiry
   // ═══════════════════════════════════════════════════════════
   socket.on('disconnect', () => {

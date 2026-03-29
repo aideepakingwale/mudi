@@ -844,7 +844,8 @@ select,input,button,textarea{font-family:inherit;}
   <!-- MASTER: file section -->
   <div class="master-only" id="file-section-master" style="display:flex;flex-direction:column;gap:10px;">
     <div class="lbl">Audio File</div>
-    <label for="file-input" class="file-chip" id="file-chip">
+<div style="display:flex;gap:8px;">
+    <label for="file-input" class="file-chip" id="file-chip" style="flex:1;">
       <div class="file-icon">♫</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:clamp(12px,3.2vw,14px);font-weight:500;" id="file-chip-title">Select audio file</div>
@@ -852,6 +853,30 @@ select,input,button,textarea{font-family:inherit;}
       </div>
       <span style="color:var(--muted);font-size:clamp(16px,4.5vw,20px);flex-shrink:0;">›</span>
     </label>
+    <button id="livestream-chip" onclick="showLiveStreamMenu()"
+      title="Stream microphone or system audio live"
+      style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:4px;padding:10px 14px;border-radius:12px;border:1px solid var(--bdr);
+        background:var(--surf);cursor:pointer;color:var(--white);flex-shrink:0;min-width:64px;">
+      <span style="font-size:22px;" id="livestream-chip-icon">📡</span>
+      <span style="font-size:9px;color:var(--muted);" id="livestream-chip-label">Go Live</span>
+    </button>
+  </div>
+
+  <!-- Live stream status card — shown while streaming -->
+  <div id="livestream-card" style="display:none;" class="card card-sm">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:22px;animation:blink .9s step-end infinite;">🔴</span>
+      <div style="flex:1;">
+        <div style="font-size:13px;font-weight:600;" id="livestream-title">Live streaming</div>
+        <div style="font-size:10px;color:var(--muted);" id="livestream-status">Chunk 0 · 0 listeners</div>
+      </div>
+      <button onclick="stopLiveStream()" style="background:none;border:1px solid var(--red);
+        color:var(--red);border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;">Stop</button>
+    </div>
+    <div class="prog-track" style="margin-top:8px;"><div class="prog-fill" id="livestream-prog" style="width:0%;transition:width 0.1s linear;"></div></div>
+    <div style="font-size:9px;color:var(--muted);margin-top:4px;" id="livestream-prog-label">Recording next chunk…</div>
+  </div>
     <input type="file" id="file-input" accept="audio/*"
       style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"
       onchange="onFileSelect(event)">
@@ -880,6 +905,15 @@ select,input,button,textarea{font-family:inherit;}
     <div id="wait-file" class="card card-sm" style="text-align:center;color:var(--muted);font-size:clamp(10px,2.8vw,12px);padding:clamp(14px,4vw,18px);">
       <div style="margin-bottom:6px;">🎵 Ready to receive</div>
       <div class="dots-anim" style="font-size:clamp(9px,2.4vw,10px);">Waiting for host to select and share an audio file</div>
+    </div>
+    <div id="live-badge" style="display:none;" class="card card-sm">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:18px;animation:blink .9s step-end infinite;">🔴</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--cyan);">Live Audio</div>
+          <div style="font-size:10px;color:var(--muted);">Host is streaming — playback starts automatically</div>
+        </div>
+      </div>
     </div>
     <div id="recv-block" style="display:none;">
       <div class="lbl">Receiving</div>
@@ -3074,6 +3108,11 @@ function initSocket() {
       btn.style.opacity = '1';
       btn.style.cursor  = 'pointer';
       btn.innerHTML = '▶ &nbsp;Sync Play';
+      // Auto-play live chunks without requiring host to tap Sync Play
+      if (S._liveStream) {
+        S.socket.emit('sync:play', { position: 0 });
+        return;
+      }
       toast('All listeners ready — tap Sync Play', TOAST_DURATION.aux);
     } else {
       btn.disabled = true;
@@ -3419,6 +3458,21 @@ function initSocket() {
 
   S.socket.on('leaderboard:data', ({ board, reactions }) => {
     renderLeaderboard(board, reactions);
+  });
+
+  // Live stream signals from host
+  S.socket.on('livestream:start', ({ source }) => {
+    S._liveStream = true;
+    const badge = $('live-badge');
+    if (badge) badge.style.display = '';
+    $('wait-file').style.display = 'none';
+    toast((source === 'mic' ? '🎙️' : '💻') + ' Host is streaming live — audio will play automatically');
+  });
+  S.socket.on('livestream:stop', () => {
+    S._liveStream = false;
+    const badge = $('live-badge');
+    if (badge) badge.style.display = 'none';
+    toast('Host ended the live stream');
   });
 
   S.socket.on('score:update', ({ userId, name, scores }) => {
@@ -4068,6 +4122,151 @@ function cancelReply() {
   $('reply-banner')?.classList.remove('show');
 }
 
+
+
+/* ═══════════════════════════════════════════════════════════════
+   LIVE STREAM ENGINE
+   Records mic or system audio in 5s chunks, sends each chunk
+   through the existing sendFile() relay path.
+   Listeners auto-play each chunk as it arrives.
+═══════════════════════════════════════════════════════════════ */
+let _liveStream       = null;   // MediaStream
+let _liveRecorder     = null;   // MediaRecorder
+let _liveChunks       = [];
+let _liveChunkNum     = 0;
+let _liveActive       = false;
+let _liveSource       = '';     // 'mic' | 'system'
+let _liveChunkTimer   = null;
+let _liveProgTimer    = null;
+const LIVE_CHUNK_MS   = 5000;   // 5s per chunk
+
+function showLiveStreamMenu() {
+  if (_liveActive) { stopLiveStream(); return; }
+  $('livestream-menu').style.display         = 'block';
+  $('livestream-menu-overlay').style.display = 'block';
+}
+function closeLiveStreamMenu() {
+  $('livestream-menu').style.display         = 'none';
+  $('livestream-menu-overlay').style.display = 'none';
+}
+
+async function startLiveStream(source) {
+  closeLiveStreamMenu();
+  if (_liveActive) stopLiveStream();
+
+  let stream;
+  try {
+    if (source === 'mic') {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    } else {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: false,
+        audio: { systemAudio: 'include', echoCancellation: false, noiseSuppression: false },
+      });
+      if (!stream.getAudioTracks().length) {
+        stream.getTracks().forEach(t => t.stop());
+        toast('No audio captured — tick "Share system audio" in the browser dialog');
+        return;
+      }
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError' && e.name !== 'NotAllowedError')
+      toast('Stream error: ' + e.message);
+    else if (e.name === 'NotAllowedError')
+      toast('Permission denied — allow microphone access');
+    return;
+  }
+
+  _liveStream   = stream;
+  _liveActive   = true;
+  _liveSource   = source;
+  _liveChunkNum = 0;
+
+  // Hide file chip, show live card
+  $('file-chip').style.display        = 'none';
+  $('livestream-chip').style.display  = 'none';
+  $('livestream-card').style.display  = '';
+  $('livestream-title').textContent   = source === 'mic' ? '🎙️ Microphone live' : '💻 System audio live';
+  resetFileUI(); // clear any previous file state
+
+  // Tell listeners a live stream is starting
+  S.socket.emit('livestream:start', { source });
+  toast((source === 'mic' ? '🎙️' : '💻') + ' Live streaming started — ' + LIVE_CHUNK_MS/1000 + 's chunks');
+
+  // Stop when media track ends (e.g. user stops screen share from browser UI)
+  stream.getTracks()[0].onended = stopLiveStream;
+
+  _recordNextChunk();
+}
+
+function _recordNextChunk() {
+  if (!_liveActive || !_liveStream) return;
+  _liveChunks   = [];
+  const chunkN  = ++_liveChunkNum;
+  const tracker = $('livestream-status');
+  const prog    = $('livestream-prog');
+  const label   = $('livestream-prog-label');
+
+  _liveRecorder = new MediaRecorder(_liveStream, {
+    mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm',
+  });
+  _liveRecorder.ondataavailable = e => { if (e.data.size > 0) _liveChunks.push(e.data); };
+  _liveRecorder.onstop = async () => {
+    if (!_liveActive) return;
+    const blob = new Blob(_liveChunks, { type: 'audio/webm' });
+    const buf  = await blob.arrayBuffer();
+    // Wrap as a File so sendFile() can handle it
+    const file = new File([buf], 'live-chunk-' + chunkN + '.webm', { type: 'audio/webm' });
+    // Tag it as a live chunk so listener knows to auto-play
+    file._liveChunk = true;
+    if (tracker) tracker.textContent = 'Chunk ' + chunkN + ' · ' + (S.listenerCount||0) + ' listener' + ((S.listenerCount||0)!==1?'s':'');
+    if (label)   label.textContent = 'Sending chunk ' + chunkN + '…';
+    try {
+      await sendFile(file);
+      if (label) label.textContent = '✓ Chunk ' + chunkN + ' sent';
+    } catch(e) {
+      console.warn('[live] chunk send error:', e.message);
+    }
+    // Start next chunk immediately
+    if (_liveActive) _recordNextChunk();
+  };
+
+  // Progress bar sweeps across LIVE_CHUNK_MS
+  let elapsed = 0;
+  clearInterval(_liveProgTimer);
+  if (prog) { prog.style.width = '0%'; }
+  _liveProgTimer = setInterval(() => {
+    elapsed += 100;
+    const pct = Math.min(elapsed / LIVE_CHUNK_MS * 100, 100);
+    if (prog) prog.style.width = pct.toFixed(1) + '%';
+    if (elapsed >= LIVE_CHUNK_MS) clearInterval(_liveProgTimer);
+  }, 100);
+
+  _liveRecorder.start();
+  _liveChunkTimer = setTimeout(() => {
+    if (_liveRecorder?.state === 'recording') _liveRecorder.stop();
+  }, LIVE_CHUNK_MS);
+}
+
+function stopLiveStream() {
+  _liveActive = false;
+  clearTimeout(_liveChunkTimer);
+  clearInterval(_liveProgTimer);
+  if (_liveRecorder?.state === 'recording') _liveRecorder.stop();
+  if (_liveStream) { _liveStream.getTracks().forEach(t => t.stop()); _liveStream = null; }
+  $('livestream-card').style.display = 'none';
+  $('file-chip').style.display       = '';
+  $('livestream-chip').style.display = '';
+  if (S.socket) {
+    S.socket.emit('sync:stop');
+    S.socket.emit('livestream:stop');
+  }
+  resetFileUI();
+  toast('Live stream stopped');
+}
 
 /* ═══════════════════════════════════════════════════════════
    AUDIO FILE CACHE  (IndexedDB — survives page reload)
@@ -4761,5 +4960,41 @@ async function loadAnalytics() {
     Audio is sent as 10-second voice message chunks
   </div>
 </div>
+
+<!-- ══ LIVE STREAM MENU ═══════════════════════════════════════════════════ -->
+<div id="livestream-menu" style="
+  display:none;position:fixed;bottom:0;left:0;right:0;z-index:700;
+  background:var(--bg2);border-top:1px solid var(--bdr);
+  border-radius:20px 20px 0 0;padding:20px 16px 32px;
+  box-shadow:0 -8px 32px rgba(0,0,0,.5);">
+  <div style="width:36px;height:3px;background:var(--bdr);border-radius:2px;margin:0 auto 20px;"></div>
+  <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Go Live</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Stream audio directly to all listeners in real time</div>
+  <div style="display:flex;flex-direction:column;gap:10px;">
+    <button onclick="startLiveStream('mic')" style="display:flex;align-items:center;gap:14px;
+      background:var(--surf);border:1px solid var(--bdr);border-radius:14px;
+      padding:14px 16px;cursor:pointer;color:var(--white);text-align:left;width:100%;">
+      <span style="font-size:28px;">🎙️</span>
+      <div>
+        <div style="font-size:14px;font-weight:600;">Microphone</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Stream your voice live to all listeners</div>
+      </div>
+    </button>
+    <button onclick="startLiveStream('system')" style="display:flex;align-items:center;gap:14px;
+      background:var(--surf);border:1px solid var(--bdr);border-radius:14px;
+      padding:14px 16px;cursor:pointer;color:var(--white);text-align:left;width:100%;">
+      <span style="font-size:28px;">💻</span>
+      <div>
+        <div style="font-size:14px;font-weight:600;">System Audio</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">YouTube, Spotify, any app playing on your device</div>
+      </div>
+    </button>
+  </div>
+  <button onclick="closeLiveStreamMenu()" style="margin-top:16px;width:100%;padding:12px;
+    background:none;border:1px solid var(--bdr);border-radius:12px;
+    color:var(--muted);font-size:13px;cursor:pointer;">Cancel</button>
+</div>
+<div id="livestream-menu-overlay" onclick="closeLiveStreamMenu()" style="
+  display:none;position:fixed;inset:0;z-index:699;background:rgba(0,0,0,.5);"></div>
 </body>
 </html>
