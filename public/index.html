@@ -3676,6 +3676,22 @@ document.addEventListener('DOMContentLoaded', () => {
     goScreen('room');
   };
 
+
+  // Hide system audio options on mobile — getDisplayMedia not available
+  (function() {
+    const hasDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+    if (!hasDisplayMedia) {
+      // Chat audio share menu
+      const sysBtn = $('sysaudio-btn');
+      if (sysBtn) sysBtn.style.display = 'none';
+      // Live stream menu system audio button (set via data attr so menu can check)
+      document.querySelectorAll('[data-requires-display-media]').forEach(el => {
+        el.style.display = 'none';
+      });
+      console.log('[media] getDisplayMedia not available — system audio options hidden');
+    }
+  })();
+
   // Home
   $('btn-host').onclick      = () => goScreen('create');
   $('btn-join').onclick      = () => goScreen('join');
@@ -4059,12 +4075,19 @@ async function startMicShare() {
 
 async function startSystemAudioShare() {
   $('audio-share-menu').style.display = 'none'; _audioShareMenu = false;
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    toast('System audio is not supported on this device — use a desktop browser.');
+    return;
+  }
   if (_sysAudioStream) { stopAllAudioShare(); return; }
   try {
+    // video:true is required by spec — video: false throws NotSupportedError on desktop
+    // We stop all video tracks immediately after capture
     const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: false,
+      video: { width: 1, height: 1, frameRate: 1 },
       audio: { systemAudio: 'include', echoCancellation: false, noiseSuppression: false },
     });
+    stream.getVideoTracks().forEach(t => t.stop());
     const audioTracks = stream.getAudioTracks();
     if (!audioTracks.length) {
       stream.getTracks().forEach(t => t.stop());
@@ -4203,11 +4226,16 @@ async function startLiveStream(source) {
         audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
       });
     } else {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        toast('System audio is not supported on mobile. Use a desktop browser.');
+        return;
+      }
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: false,
+        video: { width: 1, height: 1, frameRate: 1 },
         audio: { systemAudio: 'include', echoCancellation: false,
                  noiseSuppression: false, sampleRate: 48000 },
       });
+      stream.getVideoTracks().forEach(t => t.stop()); // stop dummy video immediately
       if (!stream.getAudioTracks().length) {
         stream.getTracks().forEach(t => t.stop());
         toast('No audio captured — tick "Share system audio" in the browser dialog');
@@ -4989,7 +5017,7 @@ async function loadAnalytics() {
       <div style="font-size:10px;color:var(--muted);">Record your voice live</div>
     </div>
   </button>
-  <button onclick="startSystemAudioShare()" style="width:100%;display:flex;align-items:center;gap:10px;
+  <button onclick="startSystemAudioShare()" data-requires-display-media="1" style="width:100%;display:flex;align-items:center;gap:10px;
     background:none;border:none;color:var(--white);cursor:pointer;padding:10px 8px;border-radius:10px;font-size:13px;">
     <span style="font-size:20px;">💻</span>
     <div style="text-align:left;">
@@ -5026,7 +5054,7 @@ async function loadAnalytics() {
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Stream your voice live to all listeners</div>
       </div>
     </button>
-    <button onclick="startLiveStream('system')" style="display:flex;align-items:center;gap:14px;
+    <button onclick="startLiveStream('system')" data-requires-display-media="1" style="display:flex;align-items:center;gap:14px;
       background:var(--surf);border:1px solid var(--bdr);border-radius:14px;
       padding:14px 16px;cursor:pointer;color:var(--white);text-align:left;width:100%;">
       <span style="font-size:28px;">💻</span>
